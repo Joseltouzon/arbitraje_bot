@@ -19,6 +19,7 @@ from app.api.routes import (
 from app.api.websocket import ws_manager
 from app.config import settings
 from app.deps import (
+    aggregator,
     cycle_logger,
     exchange,
     live_executor,
@@ -29,8 +30,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Background task reference
+# Background task references
 _scan_task: asyncio.Task | None = None
+_ws_task: asyncio.Task | None = None
 
 
 async def broadcast_cycles(cycles_data: list[dict]) -> None:
@@ -87,7 +89,7 @@ if settings.operation_mode == "paper":
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _scan_task
+    global _scan_task, _ws_task
     logger.info("Starting crypto-arbitrage backend...")
     logger.info(
         f"Mode: {settings.operation_mode} | "
@@ -97,14 +99,29 @@ async def lifespan(app: FastAPI):
         f"Paper: {'ON' if paper_trader.enabled else 'OFF'} | "
         f"Live: {'READY' if settings.auto_trade else 'OFF'}"
     )
+
+    # Start WebSocket price stream
+    _ws_task = asyncio.create_task(aggregator.start())
+
+    # Wait for initial data
+    await asyncio.sleep(2)
+
+    # Start cycle scanner
     _scan_task = asyncio.create_task(scanner.start_scanning())
+
     yield
+
     logger.info("Shutting down...")
     scanner.stop()
+    aggregator.stop()
     if _scan_task:
         _scan_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _scan_task
+    if _ws_task:
+        _ws_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _ws_task
     await exchange.close()
 
 
@@ -144,6 +161,7 @@ async def health() -> dict[str, Any]:
         "auto_trade": settings.auto_trade,
         "paper_trading": paper_trader.enabled,
         "live_trading": live_executor.enabled,
+        "ws_stream": aggregator.get_stats(),
         "scanner": scanner.get_stats(),
         "paper": paper_trader.get_stats(),
         "live": live_executor.get_stats(),

@@ -8,9 +8,9 @@ from app.services.live_executor import LiveExecutor
 from app.services.paper_trader import PaperTrader
 from app.services.price_aggregator import PriceAggregator
 
-# Global instances (created here to avoid circular imports)
+# Global instances
 exchange = BinanceAdapter()
-aggregator = PriceAggregator(exchange=exchange)
+aggregator = PriceAggregator()
 scanner = CycleScanner(aggregator=aggregator)
 cycle_logger = CycleLogger()
 risk_manager = RiskManager()
