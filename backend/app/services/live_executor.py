@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -148,17 +149,12 @@ class LiveExecutor:
         """
         Execute a triangular cycle with real orders.
 
-        Steps:
-        1. Check risk limits
-        2. Verify balance
-        3. Place 3 sequential market orders
-        4. Verify each order result
-        5. Stop and return partial result on any failure
+        Uses LIMIT orders first (less slippage), with fallback to MARKET
+        if limit order doesn't fill within timeout.
         """
         if not self.enabled:
             return None
 
-        # Check risk limits
         can_trade, reason = self.risk.can_trade()
         if not can_trade:
             logger.warning(f"Risk check failed: {reason}")
@@ -172,7 +168,6 @@ class LiveExecutor:
         start_time = time.time()
         started_at = datetime.now()
 
-        # Get initial balance
         initial_balance = Decimal("0")
         try:
             initial_balance = await self.exchange.get_balance("USDT")
@@ -189,7 +184,6 @@ class LiveExecutor:
                 pair = leg["pair"]
                 side = leg["side"].upper()
 
-                # Calculate quantity based on available balance
                 quantity = await self._calculate_quantity(
                     pair, side, leg, tickers
                 )
@@ -206,12 +200,10 @@ class LiveExecutor:
                     )
                     break
 
-                # Place market order
+                # Try limit order first, fallback to market
                 try:
-                    result = await self.exchange.create_market_order(
-                        symbol=pair,
-                        side=side,
-                        quantity=quantity,
+                    result = await self._place_order_with_fallback(
+                        pair, side, quantity, tickers
                     )
                     duration = (time.time() - leg_start) * 1000
 
@@ -294,6 +286,93 @@ class LiveExecutor:
         )
 
         return trade
+
+    async def _place_order_with_fallback(
+        self,
+        pair: str,
+        side: str,
+        quantity: Decimal,
+        tickers: dict[str, BidAsk],
+        limit_timeout_sec: float = 1.5,
+    ) -> TradeResult:
+        """
+        Place a limit order first. If not filled within timeout,
+        cancel and place market order instead.
+
+        Limit orders have maker fee (0.1%) vs taker (0.1% on Binance),
+        but less slippage = net better execution.
+        """
+        ticker = tickers.get(pair)
+        if not ticker:
+            raise ValueError(f"No ticker for {pair}")
+
+        # Set limit price at best available
+        limit_price = (
+            Decimal(str(ticker.bid)) if side == "BUY"
+            else Decimal(str(ticker.ask))
+        )
+
+        try:
+            # Place limit order
+            order = await self.exchange.create_limit_order(
+                symbol=pair,
+                side=side,
+                quantity=quantity,
+                price=limit_price,
+            )
+
+            if order.status == "FILLED":
+                logger.info(f"Limit order FILLED immediately: {pair} {side}")
+                return order
+
+            # Wait for fill
+            order_id = order.order_id
+            checks = int(limit_timeout_sec / 0.3)
+
+            for _ in range(checks):
+                await asyncio.sleep(0.3)
+                status = await self.exchange.get_order_status(pair, order_id)
+
+                if status.get("status") == "FILLED":
+                    fills = status.get("fills", [])
+                    total_fee = sum(float(f["commission"]) for f in fills)
+                    avg_price = (
+                        sum(
+                            float(f["price"]) * float(f["qty"])
+                            for f in fills
+                        )
+                        / float(status.get("executedQty", 1))
+                        if fills
+                        else float(status.get("price", 0))
+                    )
+                    logger.info(
+                        f"Limit order FILLED after wait: {pair} {side}"
+                    )
+                    return TradeResult(
+                        order_id=order_id,
+                        symbol=pair,
+                        side=side,
+                        quantity=float(status.get("executedQty", 0)),
+                        price=avg_price,
+                        fee=total_fee,
+                        status="FILLED",
+                        timestamp=datetime.now(),
+                    )
+
+            # Cancel unfilled limit order
+            await self.exchange.cancel_order(pair, order_id)
+            logger.info(
+                f"Limit order cancelled (timeout), falling back to MARKET: "
+                f"{pair} {side}"
+            )
+
+        except Exception as e:
+            logger.warning(f"Limit order failed: {e}, trying MARKET")
+
+        # Fallback to market order
+        return await self.exchange.create_market_order(
+            symbol=pair, side=side, quantity=quantity
+        )
 
     async def _calculate_quantity(
         self,

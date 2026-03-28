@@ -162,5 +162,55 @@ class BinanceAdapter(ExchangeAdapter):
         """Return standard taker fee (can be overridden per VIP level)."""
         return self.FEE_RATE
 
+    async def create_limit_order(
+        self, symbol: str, side: str, quantity: Decimal, price: Decimal
+    ) -> TradeResult:
+        """POST /api/v3/order (LIMIT) - place a limit order."""
+        if not self.api_key or not self.api_secret:
+            raise ValueError("API key and secret required for trading")
+
+        params = self._sign(
+            {
+                "symbol": symbol,
+                "side": side.upper(),
+                "type": "LIMIT",
+                "timeInForce": "GTC",
+                "quantity": str(quantity),
+                "price": str(price),
+            }
+        )
+        resp = await self.client.post("/api/v3/order", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+        return TradeResult(
+            order_id=str(data["orderId"]),
+            symbol=data["symbol"],
+            side=data["side"],
+            quantity=float(data.get("executedQty", 0)),
+            price=float(data.get("price", 0)),
+            fee=0,
+            status=data["status"],
+            timestamp=datetime.now(),
+        )
+
+    async def get_order_status(self, symbol: str, order_id: str) -> dict:
+        """GET /api/v3/order - check order status."""
+        params = self._sign(
+            {"symbol": symbol, "orderId": order_id}
+        )
+        resp = await self.client.get("/api/v3/order", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def cancel_order(self, symbol: str, order_id: str) -> dict:
+        """DELETE /api/v3/order - cancel an open order."""
+        params = self._sign(
+            {"symbol": symbol, "orderId": order_id}
+        )
+        resp = await self.client.delete("/api/v3/order", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
     async def close(self) -> None:
         await self.client.aclose()
