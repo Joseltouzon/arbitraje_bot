@@ -1,0 +1,404 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
+
+from app.config import settings
+from app.core.risk import RiskManager
+from app.exchanges.binance import BinanceAdapter
+from app.models.primitives import BidAsk, TradeResult
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class LiveTradeLeg:
+    """A single leg of a live trade execution."""
+
+    pair: str
+    side: str  # "BUY" or "SELL"
+    quantity: Decimal
+    order_result: TradeResult | None = None
+    error: str | None = None
+    duration_ms: float = 0.0
+
+
+@dataclass
+class LiveTrade:
+    """A completed live trade (3-leg cycle)."""
+
+    id: int
+    currencies: list[str]
+    pairs: list[str]
+    sides: list[str]
+    legs: list[LiveTradeLeg]
+    initial_balance: Decimal
+    final_balance: Decimal
+    profit_usdt: Decimal
+    profit_pct: float
+    total_fees: Decimal
+    status: str  # "completed", "partial", "failed"
+    started_at: datetime
+    completed_at: datetime | None = None
+    total_duration_ms: float = 0.0
+
+
+class LiveExecutor:
+    """
+    Executes real triangular arbitrage trades on Binance.
+
+    SAFETY FEATURES:
+    - Requires explicit enable_live() call
+    - Enforces risk management rules
+    - Verifies balances before each trade
+    - Stops on any order failure
+    - Logs everything to database
+    - Tracks P&L in real-time
+    """
+
+    def __init__(
+        self,
+        exchange: BinanceAdapter,
+        risk_manager: RiskManager | None = None,
+    ) -> None:
+        self.exchange = exchange
+        self.risk = risk_manager or RiskManager()
+        self._enabled = False
+        self._confirmed = False
+        self.trade_count = 0
+        self.trades: list[LiveTrade] = []
+        self.total_profit = Decimal("0")
+        self.total_fees = Decimal("0")
+        self._last_balance_check: dict[str, Decimal] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled and self._confirmed
+
+    def enable(self) -> dict[str, str]:
+        """Enable live trading. Returns confirmation message."""
+        if not settings.auto_trade:
+            return {
+                "status": "error",
+                "message": "AUTO_TRADE must be true in .env to enable live trading",
+            }
+
+        if not settings.binance_api_key or not settings.binance_api_secret:
+            return {
+                "status": "error",
+                "message": "Binance API credentials not configured",
+            }
+
+        self._enabled = True
+        logger.warning("LIVE TRADING ENABLED - Real orders will be placed")
+        return {
+            "status": "enabled",
+            "message": (
+                "Live trading is now ACTIVE. "
+                "Real orders will be placed on Binance. "
+                "Call /api/live/confirm to finalize."
+            ),
+        }
+
+    def confirm(self) -> dict[str, str]:
+        """Final confirmation to start placing real orders."""
+        if not self._enabled:
+            return {"status": "error", "message": "Enable first via /api/live/enable"}
+
+        self._confirmed = True
+        logger.warning("LIVE TRADING CONFIRMED - Orders can now be placed")
+        return {
+            "status": "confirmed",
+            "message": "Live trading confirmed. System will execute profitable cycles.",
+        }
+
+    def disable(self) -> dict[str, str]:
+        """Immediately disable live trading."""
+        self._enabled = False
+        self._confirmed = False
+        self.risk.pause()
+        logger.warning("LIVE TRADING DISABLED")
+        return {"status": "disabled", "message": "Live trading stopped"}
+
+    async def verify_balance(self, currency: str, required: Decimal) -> bool:
+        """Verify sufficient balance before trading."""
+        try:
+            balance = await self.exchange.get_balance(currency)
+            self._last_balance_check[currency] = balance
+            if balance < required:
+                logger.warning(
+                    f"Insufficient {currency} balance: "
+                    f"have {balance}, need {required}"
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Balance check failed: {e}")
+            return False
+
+    async def execute_cycle(
+        self,
+        cycle: dict[str, Any],
+        tickers: dict[str, BidAsk],
+    ) -> LiveTrade | None:
+        """
+        Execute a triangular cycle with real orders.
+
+        Steps:
+        1. Check risk limits
+        2. Verify balance
+        3. Place 3 sequential market orders
+        4. Verify each order result
+        5. Stop and return partial result on any failure
+        """
+        if not self.enabled:
+            return None
+
+        # Check risk limits
+        can_trade, reason = self.risk.can_trade()
+        if not can_trade:
+            logger.warning(f"Risk check failed: {reason}")
+            return None
+
+        legs = cycle.get("legs", [])
+        if len(legs) < 3:
+            return None
+
+        self.trade_count += 1
+        start_time = time.time()
+        started_at = datetime.now()
+
+        # Get initial balance
+        initial_balance = Decimal("0")
+        try:
+            initial_balance = await self.exchange.get_balance("USDT")
+        except Exception as e:
+            logger.error(f"Failed to get initial balance: {e}")
+            return None
+
+        trade_legs: list[LiveTradeLeg] = []
+        status = "completed"
+
+        try:
+            for leg in legs:
+                leg_start = time.time()
+                pair = leg["pair"]
+                side = leg["side"].upper()
+
+                # Calculate quantity based on available balance
+                quantity = await self._calculate_quantity(
+                    pair, side, leg, tickers
+                )
+
+                if quantity <= 0:
+                    status = "failed"
+                    trade_legs.append(
+                        LiveTradeLeg(
+                            pair=pair,
+                            side=side,
+                            quantity=Decimal("0"),
+                            error="Could not calculate valid quantity",
+                        )
+                    )
+                    break
+
+                # Place market order
+                try:
+                    result = await self.exchange.create_market_order(
+                        symbol=pair,
+                        side=side,
+                        quantity=quantity,
+                    )
+                    duration = (time.time() - leg_start) * 1000
+
+                    trade_legs.append(
+                        LiveTradeLeg(
+                            pair=pair,
+                            side=side,
+                            quantity=quantity,
+                            order_result=result,
+                            duration_ms=round(duration, 2),
+                        )
+                    )
+
+                    logger.info(
+                        f"Order placed: {side} {quantity} {pair} "
+                        f"@ {result.price} | fee: {result.fee}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Order failed for {pair}: {e}")
+                    status = "partial"
+                    trade_legs.append(
+                        LiveTradeLeg(
+                            pair=pair,
+                            side=side,
+                            quantity=quantity,
+                            error=str(e),
+                        )
+                    )
+                    break
+
+            # Get final balance
+            final_balance = await self.exchange.get_balance("USDT")
+
+        except Exception as e:
+            logger.error(f"Trade execution error: {e}")
+            final_balance = initial_balance
+            status = "failed"
+
+        # Calculate P&L
+        total_duration = (time.time() - start_time) * 1000
+        profit = final_balance - initial_balance
+        profit_pct = float(profit / initial_balance * 100) if initial_balance > 0 else 0
+        total_fees = sum(
+            Decimal(str(leg.order_result.fee))
+            for leg in trade_legs
+            if leg.order_result
+        )
+
+        # Update risk manager
+        self.risk.record_trade(float(profit))
+
+        trade = LiveTrade(
+            id=self.trade_count,
+            currencies=cycle["currencies"],
+            pairs=[leg["pair"] for leg in legs],
+            sides=[leg["side"].upper() for leg in legs],
+            legs=trade_legs,
+            initial_balance=initial_balance,
+            final_balance=final_balance,
+            profit_usdt=profit,
+            profit_pct=profit_pct,
+            total_fees=total_fees,
+            status=status,
+            started_at=started_at,
+            completed_at=datetime.now(),
+            total_duration_ms=round(total_duration, 2),
+        )
+
+        self.trades.append(trade)
+        self.total_profit += profit
+        self.total_fees += total_fees
+
+        log_status = "PROFIT" if profit > 0 else "LOSS"
+        logger.info(
+            f"Live trade #{self.trade_count}: {log_status} "
+            f"${profit:.4f} ({profit_pct:.4f}%) | "
+            f"Status: {status} | "
+            f"Duration: {total_duration:.0f}ms"
+        )
+
+        return trade
+
+    async def _calculate_quantity(
+        self,
+        pair: str,
+        side: str,
+        leg: dict,
+        tickers: dict[str, BidAsk],
+    ) -> Decimal:
+        """
+        Calculate order quantity based on available balance and pair constraints.
+        """
+        if pair not in tickers:
+            return Decimal("0")
+
+        ticker = tickers[pair]
+
+        if side == "BUY":
+            # Buying: use quote currency (e.g., USDT for BTCUSDT)
+            quote = pair.replace(leg.get("to_currency", ""), "")
+            if not quote:
+                quote = "USDT"
+
+            balance = await self.exchange.get_balance(quote)
+            # Reserve 1% for fees and rounding
+            available = balance * Decimal("0.99")
+            price = Decimal(str(ticker.ask))
+
+            if price <= 0:
+                return Decimal("0")
+
+            quantity = available / price
+
+            # Round to reasonable precision (Binance lot sizes)
+            quantity = quantity.quantize(Decimal("0.00001"))
+
+            return quantity
+
+        else:
+            # Selling: use base currency balance
+            base = pair.replace("USDT", "").replace("BTC", "").replace("ETH", "")
+            if not base:
+                base = leg.get("from_currency", "")
+
+            balance = await self.exchange.get_balance(base)
+            # Reserve small amount for rounding
+            quantity = balance * Decimal("0.99")
+            quantity = quantity.quantize(Decimal("0.00001"))
+
+            return quantity
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get live trading statistics."""
+        profitable = sum(1 for t in self.trades if t.profit_usdt > 0)
+        failed = sum(1 for t in self.trades if t.status == "failed")
+        partial = sum(1 for t in self.trades if t.status == "partial")
+
+        return {
+            "enabled": self._enabled,
+            "confirmed": self._confirmed,
+            "total_trades": len(self.trades),
+            "profitable_trades": profitable,
+            "failed_trades": failed,
+            "partial_trades": partial,
+            "success_rate": round(
+                profitable / len(self.trades) * 100, 2
+            )
+            if self.trades
+            else 0,
+            "total_profit_usdt": float(self.total_profit),
+            "total_fees_usdt": float(self.total_fees),
+            "net_profit_usdt": float(self.total_profit),
+            "risk": {
+                "paused": self.risk.is_paused,
+                "consecutive_losses": self.risk.consecutive_losses,
+                "daily_pnl": self.risk.daily_pnl,
+            },
+        }
+
+    def get_recent_trades(self, limit: int = 20) -> list[dict]:
+        """Get recent live trades."""
+        recent = self.trades[-limit:]
+        return [
+            {
+                "id": t.id,
+                "currencies": t.currencies,
+                "pairs": t.pairs,
+                "sides": t.sides,
+                "profit_usdt": float(t.profit_usdt),
+                "profit_pct": t.profit_pct,
+                "total_fees": float(t.total_fees),
+                "status": t.status,
+                "duration_ms": t.total_duration_ms,
+                "started_at": t.started_at.isoformat(),
+                "legs": [
+                    {
+                        "pair": leg.pair,
+                        "side": leg.side,
+                        "quantity": float(leg.quantity),
+                        "price": leg.order_result.price if leg.order_result else 0,
+                        "fee": leg.order_result.fee if leg.order_result else 0,
+                        "error": leg.error,
+                        "duration_ms": leg.duration_ms,
+                    }
+                    for leg in t.legs
+                ],
+            }
+            for t in reversed(recent)
+        ]

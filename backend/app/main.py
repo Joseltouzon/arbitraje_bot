@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import (
+    cycles,
+    history,
+    live_route,
+    paper_route,
+    prices,
+    settings_route,
+)
+from app.api.websocket import ws_manager
+from app.config import settings
+from app.deps import (
+    cycle_logger,
+    exchange,
+    live_executor,
+    paper_trader,
+    scanner,
+)
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# Background task reference
+_scan_task: asyncio.Task | None = None
+
+
+async def broadcast_cycles(cycles_data: list[dict]) -> None:
+    if not cycles_data:
+        return
+    await ws_manager.broadcast({"type": "cycles", "data": cycles_data})
+
+
+async def persist_cycles(cycles_data: list[dict]) -> None:
+    for cycle in cycles_data:
+        await cycle_logger.log_cycle(cycle)
+
+
+async def execute_paper_trades(cycles_data: list[dict]) -> None:
+    if not paper_trader.enabled:
+        return
+    for cycle in cycles_data:
+        result = await paper_trader.try_execute(cycle, scanner.tickers)
+        if result:
+            await ws_manager.broadcast(
+                {"type": "paper_trade", "data": result}
+            )
+
+
+async def execute_live_trades(cycles_data: list[dict]) -> None:
+    if not live_executor.enabled:
+        return
+    for cycle in cycles_data:
+        result = await live_executor.execute_cycle(cycle, scanner.tickers)
+        if result:
+            await ws_manager.broadcast(
+                {
+                    "type": "live_trade",
+                    "data": {
+                        "trade_id": result.id,
+                        "currencies": result.currencies,
+                        "profit_usdt": float(result.profit_usdt),
+                        "profit_pct": result.profit_pct,
+                        "status": result.status,
+                        "duration_ms": result.total_duration_ms,
+                    },
+                }
+            )
+
+
+scanner.on_cycle_update(broadcast_cycles)
+scanner.on_cycle_update(persist_cycles)
+scanner.on_cycle_update(execute_paper_trades)
+scanner.on_cycle_update(execute_live_trades)
+
+if settings.operation_mode == "paper":
+    paper_trader.enable()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _scan_task
+    logger.info("Starting crypto-arbitrage backend...")
+    logger.info(
+        f"Mode: {settings.operation_mode} | "
+        f"Auto-trade: {settings.auto_trade}"
+    )
+    logger.info(
+        f"Paper: {'ON' if paper_trader.enabled else 'OFF'} | "
+        f"Live: {'READY' if settings.auto_trade else 'OFF'}"
+    )
+    _scan_task = asyncio.create_task(scanner.start_scanning())
+    yield
+    logger.info("Shutting down...")
+    scanner.stop()
+    if _scan_task:
+        _scan_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _scan_task
+    await exchange.close()
+
+
+app = FastAPI(
+    title="Crypto Arbitrage - Triangular",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(cycles.router, prefix="/api/cycles", tags=["cycles"])
+app.include_router(prices.router, prefix="/api/prices", tags=["prices"])
+app.include_router(
+    settings_route.router, prefix="/api/settings", tags=["settings"]
+)
+app.include_router(history.router, prefix="/api/history", tags=["history"])
+app.include_router(
+    paper_route.router, prefix="/api/paper", tags=["paper-trading"]
+)
+app.include_router(
+    live_route.router, prefix="/api/live", tags=["live-trading"]
+)
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "mode": settings.operation_mode,
+        "auto_trade": settings.auto_trade,
+        "paper_trading": paper_trader.enabled,
+        "live_trading": live_executor.enabled,
+        "scanner": scanner.get_stats(),
+        "paper": paper_trader.get_stats(),
+        "live": live_executor.get_stats(),
+    }
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        if scanner.cycles:
+            await websocket.send_json(
+                {"type": "cycles", "data": scanner.cycles}
+            )
+        if paper_trader.enabled:
+            await websocket.send_json(
+                {"type": "paper_stats", "data": paper_trader.get_stats()}
+            )
+        if live_executor.enabled:
+            await websocket.send_json(
+                {"type": "live_stats", "data": live_executor.get_stats()}
+            )
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except WebSocketDisconnect:
+                break
+    except Exception:
+        pass
+    finally:
+        ws_manager.disconnect(websocket)

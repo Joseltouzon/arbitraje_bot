@@ -1,0 +1,88 @@
+import { useState, useEffect } from 'react';
+import { fetchPrices } from '../../lib/api';
+
+interface Ticker {
+  bid: number;
+  ask: number;
+  spread_pct: number;
+}
+
+export function OrderBook() {
+  const [tickers, setTickers] = useState<Record<string, Ticker>>({});
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetchPrices();
+        setTickers(res.tickers || {});
+        setTotal(res.total || 0);
+      } catch {
+        // ignore
+      }
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const filtered = Object.entries(tickers).filter(([symbol]) =>
+    symbol.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="text-white font-semibold">Order Book (Top Tickers)</h3>
+        <span className="text-gray-400 text-sm">{total} pairs</span>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Search pair..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white text-sm mb-3 focus:outline-none focus:border-blue-500"
+      />
+
+      <div className="overflow-y-auto max-h-80">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-gray-800">
+            <tr className="text-gray-500 text-left">
+              <th className="pb-2 pr-3">Pair</th>
+              <th className="pb-2 pr-3 text-right">Bid</th>
+              <th className="pb-2 pr-3 text-right">Ask</th>
+              <th className="pb-2 text-right">Spread %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 50).map(([symbol, data]) => (
+              <tr
+                key={symbol}
+                className="border-t border-gray-700/50 hover:bg-gray-700/30"
+              >
+                <td className="py-1.5 pr-3 text-white font-mono font-medium">
+                  {symbol}
+                </td>
+                <td className="py-1.5 pr-3 text-right text-green-400 font-mono">
+                  {data.bid.toLocaleString(undefined, {
+                    maximumFractionDigits: 8,
+                  })}
+                </td>
+                <td className="py-1.5 pr-3 text-right text-red-400 font-mono">
+                  {data.ask.toLocaleString(undefined, {
+                    maximumFractionDigits: 8,
+                  })}
+                </td>
+                <td className="py-1.5 text-right text-gray-400 font-mono">
+                  {data.spread_pct.toFixed(4)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
