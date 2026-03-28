@@ -25,6 +25,7 @@ from app.deps import (
     live_executor,
     paper_trader,
     scanner,
+    telegram,
 )
 from app.utils.logger import get_logger
 
@@ -41,6 +42,15 @@ async def broadcast_cycles(cycles_data: list[dict]) -> None:
     await ws_manager.broadcast({"type": "cycles", "data": cycles_data})
 
 
+async def notify_cycles_telegram(cycles_data: list[dict]) -> None:
+    """Notify top cycle via Telegram (throttled to 1 per minute)."""
+    if not telegram.is_configured or not cycles_data:
+        return
+    top = cycles_data[0]
+    if top.get("net_profit_pct", 0) >= settings.min_profit_threshold_pct:
+        await telegram.notify_cycle(top)
+
+
 async def persist_cycles(cycles_data: list[dict]) -> None:
     for cycle in cycles_data:
         await cycle_logger.log_cycle(cycle)
@@ -55,6 +65,7 @@ async def execute_paper_trades(cycles_data: list[dict]) -> None:
             await ws_manager.broadcast(
                 {"type": "paper_trade", "data": result}
             )
+            await telegram.notify_paper_trade(result)
 
 
 async def execute_live_trades(cycles_data: list[dict]) -> None:
@@ -76,9 +87,19 @@ async def execute_live_trades(cycles_data: list[dict]) -> None:
                     },
                 }
             )
+            await telegram.notify_live_trade(
+                {
+                    "currencies": result.currencies,
+                    "profit_usdt": float(result.profit_usdt),
+                    "profit_pct": result.profit_pct,
+                    "status": result.status,
+                    "duration_ms": result.total_duration_ms,
+                }
+            )
 
 
 scanner.on_cycle_update(broadcast_cycles)
+scanner.on_cycle_update(notify_cycles_telegram)
 scanner.on_cycle_update(persist_cycles)
 scanner.on_cycle_update(execute_paper_trades)
 scanner.on_cycle_update(execute_live_trades)
@@ -165,6 +186,7 @@ async def health() -> dict[str, Any]:
         "scanner": scanner.get_stats(),
         "paper": paper_trader.get_stats(),
         "live": live_executor.get_stats(),
+        "telegram": telegram.get_stats(),
     }
 
 

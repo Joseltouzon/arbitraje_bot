@@ -64,16 +64,17 @@ class BinanceWsStream:
                 data = resp.json()
 
                 for item in data:
-                    symbol = item["s"]
-                    bid = float(item["b"])
-                    ask = float(item["a"])
+                    # REST format: symbol, bidPrice, askPrice, bidQty, askQty
+                    symbol = item.get("symbol", item.get("s", ""))
+                    bid = float(item.get("bidPrice", item.get("b", 0)))
+                    ask = float(item.get("askPrice", item.get("a", 0)))
 
                     if bid > 0 and ask > 0 and bid < ask:
                         self._tickers[symbol] = BidAsk(
                             bid=bid,
                             ask=ask,
-                            bid_qty=float(item["B"]),
-                            ask_qty=float(item["A"]),
+                            bid_qty=float(item.get("bidQty", item.get("B", 0))),
+                            ask_qty=float(item.get("askQty", item.get("A", 0))),
                         )
 
                 logger.info(

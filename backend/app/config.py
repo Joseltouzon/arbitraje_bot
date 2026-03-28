@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = 3
     stop_loss_pct: float = 5.0
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     model_config = {"env_file": "../.env", "env_file_encoding": "utf-8"}
 
     @property

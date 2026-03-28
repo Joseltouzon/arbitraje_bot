@@ -7,6 +7,7 @@ from app.services.cycle_scanner import CycleScanner
 from app.services.live_executor import LiveExecutor
 from app.services.paper_trader import PaperTrader
 from app.services.price_aggregator import PriceAggregator
+from app.services.telegram import TelegramNotifier
 
 # Global instances
 exchange = BinanceAdapter()
@@ -23,6 +24,7 @@ live_executor = LiveExecutor(
     exchange=exchange,
     risk_manager=risk_manager,
 )
+telegram = TelegramNotifier()
 
 
 def get_scanner() -> CycleScanner:
