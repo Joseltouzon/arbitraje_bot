@@ -22,7 +22,7 @@ async def get_settings():
         "operation_mode": settings.operation_mode,
         "auto_trade": settings.auto_trade,
         "min_profit_threshold_pct": settings.min_profit_threshold_pct,
-        "start_currency": settings.start_currency,
+        "start_currencies": settings.start_currency_list,
         "max_cycle_length": settings.max_cycle_length,
         "poll_interval_ms": settings.poll_interval_ms,
         "trade_amount_usdt": settings.trade_amount_usdt,

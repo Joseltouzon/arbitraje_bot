@@ -14,14 +14,13 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Type for cycle update callback
 CycleCallback = Callable[[list[dict[str, Any]]], Any]
 
 
 class CycleScanner:
     """
     Continuously scans for profitable triangular cycles.
-    Runs: price fetch → graph build → Bellman-Ford cycle detection.
+    Scans from multiple start currencies (USDT, BTC, ETH, BNB).
     """
 
     def __init__(self, aggregator: PriceAggregator) -> None:
@@ -47,12 +46,11 @@ class CycleScanner:
         return self._scan_count
 
     def on_cycle_update(self, callback: CycleCallback) -> None:
-        """Register a callback for when cycles are updated."""
         self._callbacks.append(callback)
 
     async def scan_once(self) -> list[dict[str, Any]]:
-        """Run a single scan cycle."""
-        tickers = await self.aggregator.fetch_tickers()
+        """Run a single scan cycle across all start currencies."""
+        tickers = self.aggregator.tickers
         if not tickers:
             return []
 
@@ -61,60 +59,75 @@ class CycleScanner:
         # Filter to pairs with sufficient liquidity
         filtered = self.aggregator.get_quote_prices(tickers)
         if len(filtered) < 3:
-            logger.warning("Not enough pairs for cycle detection")
             return []
 
-        # Build currency graph
+        # Build currency graph once
         graph, metadata = build_currency_graph(filtered)
 
-        # Find profitable cycles using Bellman-Ford + DFS
-        cycles = bellman_ford_cycles(
-            graph=graph,
-            metadata=metadata,
-            start_currency=settings.start_currency,
-            min_profit_pct=settings.min_profit_threshold_pct,
-            max_cycle_length=settings.max_cycle_length,
-        )
+        # Scan from each start currency
+        all_cycles: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
 
-        # Enrich with exact profit calculations
-        enriched = []
-        for cycle in cycles:
-            result = calculate_cycle_profit(
-                initial_amount=settings.trade_amount_usdt,
-                rates=[leg["rate"] for leg in cycle["legs"]],
-                fee_rate=0.001,
-                slippage_pct=0.001,
+        for start_cur in settings.start_currency_list:
+            if start_cur not in graph:
+                continue
+
+            cycles = bellman_ford_cycles(
+                graph=graph,
+                metadata=metadata,
+                start_currency=start_cur,
+                min_profit_pct=settings.min_profit_threshold_pct,
+                max_cycle_length=settings.max_cycle_length,
             )
-            cycle["calculated"] = result
-            cycle["timestamp"] = datetime.now().isoformat()
-            enriched.append(cycle)
 
-        self._cycles = enriched
+            for cycle in cycles:
+                key = tuple(cycle["currencies"])
+                if key not in seen:
+                    seen.add(key)
+
+                    # Enrich with profit calculations
+                    result = calculate_cycle_profit(
+                        initial_amount=settings.trade_amount_usdt,
+                        rates=[leg["rate"] for leg in cycle["legs"]],
+                        fee_rate=0.001,
+                        slippage_pct=0.001,
+                    )
+                    cycle["calculated"] = result
+                    cycle["timestamp"] = datetime.now().isoformat()
+                    cycle["start_currency"] = start_cur
+                    all_cycles.append(cycle)
+
+        # Sort by profit descending
+        all_cycles.sort(key=lambda c: c["net_profit_pct"], reverse=True)
+
+        self._cycles = all_cycles
         self._scan_count += 1
         self._last_scan_time = datetime.now()
 
-        if enriched:
+        if all_cycles:
+            top = all_cycles[0]
             logger.info(
-                f"Scan #{self._scan_count}: {len(enriched)} profitable cycles | "
-                f"best: +{enriched[0]['net_profit_pct']:.2f}%"
+                f"Scan #{self._scan_count}: {len(all_cycles)} cycles | "
+                f"best: {top['currencies']} +{top['net_profit_pct']:.3f}%"
             )
-            # Notify callbacks
             for cb in self._callbacks:
                 try:
                     if asyncio.iscoroutinefunction(cb):
-                        await cb(enriched)
+                        await cb(all_cycles)
                     else:
-                        cb(enriched)
+                        cb(all_cycles)
                 except Exception as e:
                     logger.error(f"Callback error: {e}")
 
-        return enriched
+        return all_cycles
 
     async def start_scanning(self) -> None:
-        """Start continuous scanning loop."""
         self._running = True
         interval = settings.poll_interval_ms / 1000.0
-        logger.info(f"Starting cycle scanner (interval: {interval}s)")
+        logger.info(
+            f"Starting cycle scanner (interval: {interval}s) | "
+            f"currencies: {settings.start_currencies}"
+        )
 
         while self._running:
             try:
@@ -129,12 +142,10 @@ class CycleScanner:
             await asyncio.sleep(interval)
 
     def stop(self) -> None:
-        """Stop the scanning loop."""
         self._running = False
         logger.info("Cycle scanner stopped")
 
     def get_stats(self) -> dict[str, Any]:
-        """Get scanner statistics."""
         return {
             "scan_count": self._scan_count,
             "scan_errors": self._scan_errors,
@@ -144,4 +155,5 @@ class CycleScanner:
             "current_cycles": len(self._cycles),
             "top_profit": self._cycles[0]["net_profit_pct"] if self._cycles else 0,
             "tickers_loaded": len(self._tickers),
+            "start_currencies": settings.start_currency_list,
         }
