@@ -61,8 +61,11 @@ class CycleScanner:
         if len(filtered) < 3:
             return []
 
-        # Build currency graph once
-        graph, metadata = build_currency_graph(filtered)
+        # Build currency graph (with liquidity filter)
+        graph, metadata = build_currency_graph(
+            filtered,
+            min_liquidity=settings.min_liquidity_usdt,
+        )
 
         # Scan from each start currency
         all_cycles: list[dict[str, Any]] = []

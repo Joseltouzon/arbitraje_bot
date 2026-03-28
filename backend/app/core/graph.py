@@ -19,6 +19,7 @@ QUOTE_CURRENCIES = {
 def build_currency_graph(
     pairs: dict[str, BidAsk],
     quote_currencies: set[str] | None = None,
+    min_liquidity: float = 0,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, dict]]]:
     """
     Build directed graph of currency exchange rates.
@@ -26,6 +27,11 @@ def build_currency_graph(
     Each pair BTCUSDT creates two edges:
       USDT → BTC at rate = 1/ask (buy BTC with USDT, pay ask)
       BTC → USDT at rate = bid  (sell BTC for USDT, receive bid)
+
+    Args:
+        pairs: dict of "BTCUSDT" -> BidAsk(bid, ask)
+        quote_currencies: set of known quote currencies
+        min_liquidity: minimum liquidity in USDT (bid * bid_qty or ask * ask_qty)
 
     Returns:
         graph[base][quote] = exchange_rate (how much quote per 1 base)
@@ -36,11 +42,20 @@ def build_currency_graph(
 
     graph: dict[str, dict[str, float]] = {}
     metadata: dict[str, dict[str, dict]] = {}
+    skipped = 0
 
     for symbol, bidask in pairs.items():
         base, quote = _parse_pair(symbol, quote_currencies)
         if base is None or quote is None:
             continue
+
+        # Filter by liquidity: bid side * bid_qty or ask side * ask_qty
+        if min_liquidity > 0:
+            bid_liq = bidask.bid * bidask.bid_qty
+            ask_liq = bidask.ask * bidask.ask_qty
+            if bid_liq < min_liquidity and ask_liq < min_liquidity:
+                skipped += 1
+                continue
 
         if base not in graph:
             graph[base] = {}
@@ -72,6 +87,7 @@ def build_currency_graph(
     logger.info(
         f"Graph built: {len(graph)} currencies, "
         f"{sum(len(e) for e in graph.values())} edges"
+        f"{f' ({skipped} low-liq skipped)' if skipped else ''}"
     )
     return graph, metadata
 

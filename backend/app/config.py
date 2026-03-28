@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     max_cycle_length: int = 4
     poll_interval_ms: int = 500
     trade_amount_usdt: float = 150.0
+    min_liquidity_usdt: float = 5000.0
 
     # Risk
     max_trades_per_hour: int = 20
