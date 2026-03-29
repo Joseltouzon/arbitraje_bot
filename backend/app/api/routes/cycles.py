@@ -36,7 +36,7 @@ async def get_cycle_stats(scanner: CycleScanner = Depends(get_scanner)):
     return {
         **scanner.get_stats(),
         "config": {
-            "start_currency": settings.start_currency,
+            "start_currencies": settings.start_currencies,
             "min_profit_pct": settings.min_profit_threshold_pct,
             "max_cycle_length": settings.max_cycle_length,
             "poll_interval_ms": settings.poll_interval_ms,
