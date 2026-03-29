@@ -6,6 +6,8 @@ import { OrderBook } from './components/dashboard/OrderBook';
 import { ProfitChart } from './components/charts/ProfitChart';
 import { CycleCountChart } from './components/charts/CycleCountChart';
 import { CycleHistory } from './components/history/CycleHistory';
+import { SpotFuturesHistory } from './components/history/SpotFuturesHistory';
+import { SpotFuturesStats } from './components/history/SpotFuturesStats';
 import { AnalyticsSummary } from './components/history/AnalyticsSummary';
 import { PaperDashboard } from './components/paper/PaperDashboard';
 import { LiveDashboard } from './components/live/LiveDashboard';
@@ -186,12 +188,14 @@ function App() {
       {tab === 'history' && (
         <div className="flex-1 p-4 space-y-4 overflow-y-auto">
           <CycleHistory />
+          <SpotFuturesHistory />
         </div>
       )}
 
       {tab === 'analytics' && (
         <div className="flex-1 p-4 space-y-4 overflow-y-auto">
           <AnalyticsSummary />
+          <SpotFuturesStats />
           <div className="grid grid-cols-2 gap-4">
             <ProfitChart />
             <CycleCountChart />

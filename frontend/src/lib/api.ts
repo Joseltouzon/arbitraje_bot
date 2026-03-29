@@ -61,6 +61,18 @@ export async function fetchTopCycles(limit = 10) {
   return res.json();
 }
 
+export async function fetchSpotFuturesHistory(limit = 50) {
+  const res = await fetch(
+    `${API_BASE}/history/spot-futures?limit=${limit}`
+  );
+  return res.json();
+}
+
+export async function fetchSpotFuturesStats() {
+  const res = await fetch(`${API_BASE}/spot-futures/stats`);
+  return res.json();
+}
+
 // Paper Trading
 export async function fetchPaperStatus() {
   const res = await fetch(`${API_BASE}/paper/status`);
