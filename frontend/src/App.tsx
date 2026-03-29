@@ -3,11 +3,14 @@ import { Header } from './components/layout/Header';
 import { CycleList } from './components/dashboard/CycleList';
 import { StatsCard } from './components/dashboard/StatsCard';
 import { OrderBook } from './components/dashboard/OrderBook';
+import { ActivityLog } from './components/dashboard/ActivityLog';
+import { VolatilityGauge } from './components/dashboard/VolatilityGauge';
 import { ProfitChart } from './components/charts/ProfitChart';
 import { CycleCountChart } from './components/charts/CycleCountChart';
 import { CycleHistory } from './components/history/CycleHistory';
 import { SpotFuturesHistory } from './components/history/SpotFuturesHistory';
 import { SpotFuturesStats } from './components/history/SpotFuturesStats';
+import { SpotFuturesAnalytics } from './components/history/SpotFuturesAnalytics';
 import { AnalyticsSummary } from './components/history/AnalyticsSummary';
 import { PaperDashboard } from './components/paper/PaperDashboard';
 import { LiveDashboard } from './components/live/LiveDashboard';
@@ -151,9 +154,12 @@ function App() {
           <div className="flex-1 flex gap-4 p-4 overflow-hidden">
             <div className="flex-1 overflow-y-auto space-y-4">
               <CycleList cycles={cycles} connected={connected} />
+              <SpotFuturesStats />
               <SpotFuturesFeed opportunities={spotFutures} />
+              <ActivityLog />
             </div>
             <div className="w-96 space-y-4 overflow-y-auto">
+              <VolatilityGauge />
               <ProfitChart />
               <OrderBook />
             </div>
@@ -194,8 +200,10 @@ function App() {
 
       {tab === 'analytics' && (
         <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-          <AnalyticsSummary />
-          <SpotFuturesStats />
+          <div className="grid grid-cols-2 gap-4">
+            <AnalyticsSummary />
+            <SpotFuturesAnalytics />
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <ProfitChart />
             <CycleCountChart />
