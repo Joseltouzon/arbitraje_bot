@@ -70,6 +70,10 @@ Estas reglas son **obligatorias** sin excepción.
 14. **Pedir confirmación antes de cambios grandes** — refactorings, renames, eliminación de archivos
 15. **Reportar blockers** — si algo no funciona, decirlo inmediatamente
 
+### Evaluación
+
+16. **Evaluar ANTES de implementar** — presentar análisis de riesgo/beneficio, costo de complejidad, y alternativas. Nunca codear sin justificar el impacto real. Resumen primero, código después.
+
 ### Propuestas de mejora (sugeridas)
 
 - **Changelog automático** — mantener un CHANGELOG.md con cada cambio significativo
