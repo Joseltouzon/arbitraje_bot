@@ -111,10 +111,10 @@ class PriceAggregator:
         return filtered
 
     def get_quote_prices(self, tickers: dict[str, BidAsk]) -> dict[str, BidAsk]:
-        quotes = {"USDT", "USDC", "BTC", "ETH", "BNB", "BUSD", "SOL", "DOGE"}
+        from app.core.graph import QUOTE_CURRENCIES
         filtered = {}
         for symbol, bidask in tickers.items():
-            for quote in sorted(quotes, key=len, reverse=True):
+            for quote in sorted(QUOTE_CURRENCIES, key=len, reverse=True):
                 if symbol.endswith(quote) and len(symbol) > len(quote):
                     filtered[symbol] = bidask
                     break
