@@ -1,5 +1,7 @@
 # AGENTS.md - Crypto Triangular Arbitrage App
 
+> **Ver también:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) — Registro de mejoras implementadas, descartadas y pendientes.
+
 ## Project Overview
 
 Build a **triangular arbitrage detection and execution platform** for Binance that detects profitable currency cycles within a single exchange in real-time.
