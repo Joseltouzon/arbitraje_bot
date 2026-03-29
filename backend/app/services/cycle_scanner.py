@@ -126,15 +126,25 @@ class CycleScanner:
 
     async def start_scanning(self) -> None:
         self._running = True
-        interval = settings.poll_interval_ms / 1000.0
+        base_interval = settings.poll_interval_ms / 1000.0
         logger.info(
-            f"Starting cycle scanner (interval: {interval}s) | "
+            f"Starting cycle scanner (base interval: {base_interval}s) | "
             f"currencies: {settings.start_currencies}"
         )
 
         while self._running:
             try:
                 await self.scan_once()
+
+                # Adaptive interval: scan faster when volatile
+                from app.deps import volatility
+                volatility.update(self._tickers)
+
+                interval = (
+                    base_interval * 0.5 if volatility.is_volatile
+                    else base_interval * 2.0
+                )
+
             except Exception as e:
                 self._scan_errors += 1
                 logger.error(f"Scan error #{self._scan_errors}: {e}")

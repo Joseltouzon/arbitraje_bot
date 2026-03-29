@@ -26,6 +26,7 @@ from app.deps import (
     paper_trader,
     scanner,
     telegram,
+    volatility,
 )
 from app.utils.logger import get_logger
 
@@ -188,6 +189,7 @@ async def health() -> dict[str, Any]:
         "paper": paper_trader.get_stats(),
         "live": live_executor.get_stats(),
         "telegram": telegram.get_stats(),
+        "volatility": volatility.get_stats(),
     }
 
 
