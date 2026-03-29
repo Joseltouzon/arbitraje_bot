@@ -15,6 +15,7 @@ from app.api.routes import (
     paper_route,
     prices,
     settings_route,
+    spot_futures_route,
 )
 from app.api.websocket import ws_manager
 from app.config import settings
@@ -22,9 +23,11 @@ from app.deps import (
     aggregator,
     cycle_logger,
     exchange,
+    futures_exchange,
     live_executor,
     paper_trader,
     scanner,
+    spot_futures,
     telegram,
     volatility,
 )
@@ -35,6 +38,29 @@ logger = get_logger(__name__)
 # Background task references
 _scan_task: asyncio.Task | None = None
 _ws_task: asyncio.Task | None = None
+_sf_task: asyncio.Task | None = None
+
+
+async def spot_futures_scanner_loop():
+    """Background loop for spot-futures arbitrage scanning."""
+    while True:
+        try:
+            if aggregator.tickers:
+                opportunities = await spot_futures.scan(aggregator.tickers)
+                if opportunities:
+                    for opp in opportunities:
+                        await ws_manager.broadcast(
+                            {"type": "spot_futures", "data": opp}
+                        )
+                    await telegram.send(
+                        f"🔄 <b>Spot-Futures</b>\n"
+                        f"{opportunities[0]['symbol']}: "
+                        f"{opportunities[0]['premium_pct']:.3f}% premium\n"
+                        f"Net: {opportunities[0]['net_profit_pct']:.3f}%"
+                    )
+        except Exception as e:
+            logger.error(f"Spot-futures scan error: {e}")
+        await asyncio.sleep(10)  # Scan every 10 seconds
 
 
 async def broadcast_cycles(cycles_data: list[dict]) -> None:
@@ -111,7 +137,7 @@ if settings.operation_mode == "paper":
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _scan_task, _ws_task
+    global _scan_task, _ws_task, _sf_task
     logger.info("Starting crypto-arbitrage backend...")
     logger.info(
         f"Mode: {settings.operation_mode} | "
@@ -132,6 +158,9 @@ async def lifespan(app: FastAPI):
     # Start cycle scanner
     _scan_task = asyncio.create_task(scanner.start_scanning())
 
+    # Start spot-futures scanner
+    _sf_task = asyncio.create_task(spot_futures_scanner_loop())
+
     yield
 
     logger.info("Shutting down...")
@@ -145,7 +174,12 @@ async def lifespan(app: FastAPI):
         _ws_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _ws_task
+    if _sf_task:
+        _sf_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _sf_task
     await exchange.close()
+    await futures_exchange.close()
 
 
 app = FastAPI(
@@ -174,6 +208,9 @@ app.include_router(
 app.include_router(
     live_route.router, prefix="/api/live", tags=["live-trading"]
 )
+app.include_router(
+    spot_futures_route.router, prefix="/api/spot-futures", tags=["spot-futures"]
+)
 
 
 @app.get("/health")
@@ -190,6 +227,7 @@ async def health() -> dict[str, Any]:
         "live": live_executor.get_stats(),
         "telegram": telegram.get_stats(),
         "volatility": volatility.get_stats(),
+        "spot_futures": spot_futures.get_stats(),
     }
 
 
