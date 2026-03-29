@@ -42,26 +42,28 @@ _sf_task: asyncio.Task | None = None
 
 
 async def spot_futures_scanner_loop():
-    """Background loop for spot-futures arbitrage scanning."""
+    """Background loop for spot-futures arbitrage scanning.
+    Only takes the BEST opportunity per scan (no concurrent positions)."""
     while True:
         try:
             if aggregator.tickers:
                 opportunities = await spot_futures.scan(aggregator.tickers)
                 if opportunities:
-                    for opp in opportunities:
-                        await ws_manager.broadcast(
-                            {"type": "spot_futures", "data": opp}
-                        )
-                        await cycle_logger.log_spot_futures(opp)
+                    # Take only the best one per scan
+                    best = opportunities[0]
+                    await ws_manager.broadcast(
+                        {"type": "spot_futures", "data": best}
+                    )
+                    await cycle_logger.log_spot_futures(best)
                     await telegram.send(
                         f"🔄 <b>Spot-Futures</b>\n"
-                        f"{opportunities[0]['symbol']}: "
-                        f"{opportunities[0]['premium_pct']:.3f}% premium\n"
-                        f"Net: {opportunities[0]['net_profit_pct']:.3f}%"
+                        f"{best['symbol']}: {best['premium_pct']:.3f}% premium\n"
+                        f"Net: {best['net_profit_pct']:.3f}%\n"
+                        f"Dir: {best['direction']}"
                     )
         except Exception as e:
             logger.error(f"Spot-futures scan error: {e}")
-        await asyncio.sleep(10)  # Scan every 10 seconds
+        await asyncio.sleep(10)
 
 
 async def broadcast_cycles(cycles_data: list[dict]) -> None:
