@@ -41,6 +41,44 @@ Net profit after 3x fees (0.1% each): +0.5%
 
 ---
 
+## Reglas de Oro (Dogmas de Trabajo)
+
+Estas reglas son **obligatorias** sin excepción.
+
+### Git
+
+1. **NUNCA hacer commit sin autorización** del usuario
+2. **Incluir TODOS los cambios** en el commit (incluyendo cambios hechos por el usuario fuera del agente)
+3. **Verificar `git status` y `git diff`** antes de cada commit para confirmar qué se incluye
+4. **Mensajes cortos y claros** — formato: `tipo: descripción breve`
+   - Ejemplos: `feat: WebSocket streaming`, `fix: 500 error in cycles`, `docs: README`
+5. **Pedir autorización para push** — nunca hacer push sin que el usuario lo pida
+6. **Nueva rama después de merge a master** — nunca trabajar directo sobre master post-merge
+7. **NUNCA commitear .env, API keys o secretos** — .gitignore debe excluirlos
+
+### Código
+
+8. **Ejecutar linter y tests antes de commit** — `ruff check .` + `pytest` deben pasar limpios
+9. **Verificar que el frontend compila** antes de commit — `pnpm build`
+10. **Revisar alrededores** — al tocar un archivo, verificar imports, dependencias y usos
+11. **Seguir convenciones existentes** — mimir el estilo del codebase, no inventar patrones nuevos
+12. **No agregar dependencias sin verificar** que el proyecto ya las usa o realmente las necesita
+
+### Comunicación
+
+13. **Respuestas cortas** — 1-3 líneas cuando sea posible
+14. **Pedir confirmación antes de cambios grandes** — refactorings, renames, eliminación de archivos
+15. **Reportar blockers** — si algo no funciona, decirlo inmediatamente
+
+### Propuestas de mejora (sugeridas)
+
+- **Changelog automático** — mantener un CHANGELOG.md con cada cambio significativo
+- **Branch naming** — usar ramas descriptivas: `feature/websocket-stream`, `fix/stats-500`
+- **Pull request antes de merge** — revisión de código en PRs antes de mergear a master
+- **Versionado semántico** — actualizar tag con cada release: v1.0.1, v1.1.0, etc.
+
+---
+
 ## What You Need to Operate
 
 ### Required
