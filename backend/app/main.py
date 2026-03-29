@@ -121,8 +121,9 @@ async def lifespan(app: FastAPI):
         f"Live: {'READY' if settings.auto_trade else 'OFF'}"
     )
 
-    # Start WebSocket price stream
-    _ws_task = asyncio.create_task(aggregator.start())
+    # Start price polling
+    poll_interval = settings.poll_interval_ms / 1000.0
+    _ws_task = asyncio.create_task(aggregator.start(interval_sec=poll_interval))
 
     # Wait for initial data
     await asyncio.sleep(2)
