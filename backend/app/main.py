@@ -52,6 +52,7 @@ async def spot_futures_scanner_loop():
                         await ws_manager.broadcast(
                             {"type": "spot_futures", "data": opp}
                         )
+                        await cycle_logger.log_spot_futures(opp)
                     await telegram.send(
                         f"🔄 <b>Spot-Futures</b>\n"
                         f"{opportunities[0]['symbol']}: "

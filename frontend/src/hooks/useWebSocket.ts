@@ -1,8 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { TriangularCycle } from '../types';
 
+interface SpotFuturesOpportunity {
+  symbol: string;
+  spot_price: number;
+  futures_price: number;
+  premium_pct: number;
+  net_profit_pct: number;
+  direction: string;
+  funding_rate: number;
+}
+
 export function useWebSocket() {
   const [cycles, setCycles] = useState<TriangularCycle[]>([]);
+  const [spotFutures, setSpotFutures] = useState<SpotFuturesOpportunity[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -24,6 +35,14 @@ export function useWebSocket() {
           const data = JSON.parse(event.data);
           if (data.type === 'cycles' && Array.isArray(data.data)) {
             setCycles(data.data);
+          }
+          if (data.type === 'spot_futures' && data.data) {
+            setSpotFutures((prev) => {
+              const filtered = prev.filter(
+                (p) => p.symbol !== data.data.symbol
+              );
+              return [data.data, ...filtered].slice(0, 10);
+            });
           }
         } catch {
           // ignore non-JSON messages
@@ -55,5 +74,5 @@ export function useWebSocket() {
     };
   }, [connect]);
 
-  return { cycles, connected, lastMessage };
+  return { cycles, spotFutures, connected, lastMessage };
 }

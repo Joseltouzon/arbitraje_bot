@@ -43,3 +43,10 @@ async def get_top_cycles(limit: int = 10):
     """Get top cycles by profit percentage."""
     cycles = await _analytics.get_top_cycles(limit=limit)
     return {"cycles": cycles}
+
+
+@router.get("/spot-futures")
+async def get_spot_futures_history(limit: int = 50):
+    """Get recent spot-futures opportunities from database."""
+    records = await _cycle_logger.get_recent_spot_futures(limit=limit)
+    return {"records": records, "count": len(records)}

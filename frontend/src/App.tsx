@@ -9,6 +9,7 @@ import { CycleHistory } from './components/history/CycleHistory';
 import { AnalyticsSummary } from './components/history/AnalyticsSummary';
 import { PaperDashboard } from './components/paper/PaperDashboard';
 import { LiveDashboard } from './components/live/LiveDashboard';
+import { SpotFuturesFeed } from './components/spotfutures/SpotFuturesFeed';
 import { useWebSocket } from './hooks/useWebSocket';
 import {
   fetchPaperStatus,
@@ -74,7 +75,7 @@ interface LiveTrade {
 }
 
 function App() {
-  const { cycles, connected } = useWebSocket();
+  const { cycles, spotFutures, connected } = useWebSocket();
   const [tab, setTab] = useState<Tab>('dashboard');
   const [paperStats, setPaperStats] = useState<PaperStats | null>(null);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
@@ -146,8 +147,9 @@ function App() {
         <>
           <StatsCard cycles={cycles} />
           <div className="flex-1 flex gap-4 p-4 overflow-hidden">
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto space-y-4">
               <CycleList cycles={cycles} connected={connected} />
+              <SpotFuturesFeed opportunities={spotFutures} />
             </div>
             <div className="w-96 space-y-4 overflow-y-auto">
               <ProfitChart />

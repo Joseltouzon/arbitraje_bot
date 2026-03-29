@@ -70,3 +70,21 @@ class DailyStats(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class SpotFuturesHistory(Base):
+    """Stores detected spot-futures arbitrage opportunities."""
+
+    __tablename__ = "spot_futures_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20))
+    spot_price: Mapped[float] = mapped_column(Float)
+    futures_price: Mapped[float] = mapped_column(Float)
+    premium_pct: Mapped[float] = mapped_column(Float)
+    net_profit_pct: Mapped[float] = mapped_column(Float)
+    direction: Mapped[str] = mapped_column(String(30))
+    funding_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
