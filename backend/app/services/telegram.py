@@ -131,3 +131,142 @@ class TelegramNotifier:
     async def close(self) -> None:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
+
+    async def get_updates(self, offset: int = 0) -> list[dict]:
+        """Get new messages from Telegram."""
+        if not self.is_configured:
+            return []
+        try:
+            client = await self._get_client()
+            params = {"timeout": 1}
+            if offset:
+                params["offset"] = offset
+            resp = await client.get(
+                f"{TELEGRAM_API}/bot{self.bot_token}/getUpdates",
+                params=params,
+            )
+            resp.raise_for_status()
+            return resp.json().get("result", [])
+        except Exception:
+            return []
+
+    async def handle_command(self, command: str, deps: dict) -> str:
+        """Handle a Telegram command and return response text."""
+        cmd = command.strip().lower()
+
+        if cmd == "/status":
+            scanner = deps.get("scanner")
+            sf = deps.get("spot_futures")
+            vol = deps.get("volatility")
+            s = scanner.get_stats() if scanner else {}
+            v = vol.get_stats() if vol else {}
+            sf_s = sf.get_stats() if sf else {}
+            return (
+                f"📊 <b>Status</b>\n"
+                f"Scans: {s.get('scan_count', 0)}\n"
+                f"Pairs: {s.get('tickers_loaded', 0)}\n"
+                f"Triangular: {s.get('current_cycles', 0)} cycles\n"
+                f"Spot-Futures: {sf_s.get('opportunities', 0)} opportunities\n"
+                f"Volatility: {v.get('volatility_score', 0):.1f}\n"
+                f"{'🔴 HIGH' if v.get('is_volatile') else '🟢 Normal'}"
+            )
+
+        elif cmd == "/cycles":
+            scanner = deps.get("scanner")
+            cycles = scanner.cycles if scanner else []
+            if not cycles:
+                return "No triangular cycles detected."
+            lines = []
+            for c in cycles[:5]:
+                lines.append(
+                    f"{'→'.join(c['currencies'])} +{c['net_profit_pct']:.3f}%"
+                )
+            return "🔄 <b>Cycles</b>\n" + "\n".join(lines)
+
+        elif cmd == "/futures":
+            sf = deps.get("spot_futures")
+            opps = sf._opportunities if sf else []
+            if not opps:
+                return "No spot-futures opportunities."
+            lines = []
+            for o in opps[:5]:
+                lines.append(
+                    f"{o['symbol']}: {o['premium_pct']:.3f}% "
+                    f"net={o['net_profit_pct']:.3f}%"
+                )
+            return "📈 <b>Spot-Futures</b>\n" + "\n".join(lines)
+
+        elif cmd == "/balance":
+            spot = deps.get("exchange")
+            futures = deps.get("futures_exchange")
+            try:
+                spot_usdt = await spot.get_balance("USDT") if spot else 0
+                futures_usdt = (
+                    await futures.get_futures_usdt_balance() if futures else 0
+                )
+                return (
+                    f"💰 <b>Balance</b>\n"
+                    f"Spot: {spot_usdt} USDT\n"
+                    f"Futures: {futures_usdt} USDT"
+                )
+            except Exception as e:
+                return f"Error getting balance: {e}"
+
+        elif cmd == "/paper":
+            paper = deps.get("paper_trader")
+            if not paper:
+                return "Paper trading not configured."
+            s = paper.get_stats()
+            return (
+                f"📝 <b>Paper Trading</b>\n"
+                f"{'ON' if s['enabled'] else 'OFF'}\n"
+                f"Balance: ${s['current_balance']:.2f}\n"
+                f"P&L: ${s['net_profit']:.4f} ({s['net_profit_pct']:.2f}%)\n"
+                f"Trades: {s['total_trades']}\n"
+                f"Win rate: {s['success_rate']:.1f}%"
+            )
+
+        elif cmd == "/live":
+            live = deps.get("live_executor")
+            if not live:
+                return "Live trading not configured."
+            s = live.get_stats()
+            status = (
+                "ACTIVE" if s['enabled'] and s['confirmed']
+                else "ENABLED" if s['enabled']
+                else "OFF"
+            )
+            return (
+                f"🔴 <b>Live Trading</b>\n"
+                f"Status: {status}\n"
+                f"Trades: {s['total_trades']}\n"
+                f"Profit: ${s['total_profit_usdt']:.4f}\n"
+                f"Has position: {s['has_position']}"
+            )
+
+        elif cmd == "/pause":
+            live = deps.get("live_executor")
+            if live:
+                live.risk.pause()
+                return "⏸ Live trading paused."
+            return "Live trading not configured."
+
+        elif cmd == "/resume":
+            live = deps.get("live_executor")
+            if live:
+                live.risk.resume()
+                return "▶️ Live trading resumed."
+            return "Live trading not configured."
+
+        else:
+            return (
+                "Available commands:\n"
+                "/status - Bot status\n"
+                "/cycles - Triangular cycles\n"
+                "/futures - Spot-futures opportunities\n"
+                "/balance - Account balances\n"
+                "/paper - Paper trading stats\n"
+                "/live - Live trading stats\n"
+                "/pause - Pause live trading\n"
+                "/resume - Resume live trading"
+            )

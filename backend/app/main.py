@@ -40,6 +40,34 @@ logger = get_logger(__name__)
 _scan_task: asyncio.Task | None = None
 _ws_task: asyncio.Task | None = None
 _sf_task: asyncio.Task | None = None
+_tg_task: asyncio.Task | None = None
+
+
+async def telegram_command_loop():
+    """Poll Telegram for commands and respond."""
+    last_update_id = 0
+    deps = {
+        "scanner": scanner,
+        "spot_futures": spot_futures,
+        "volatility": volatility,
+        "exchange": exchange,
+        "futures_exchange": futures_exchange,
+        "paper_trader": paper_trader,
+        "live_executor": live_executor,
+    }
+    while True:
+        try:
+            updates = await telegram.get_updates(offset=last_update_id + 1)
+            for update in updates:
+                last_update_id = update.get("update_id", last_update_id)
+                msg = update.get("message", {})
+                text = msg.get("text", "")
+                if text.startswith("/"):
+                    response = await telegram.handle_command(text, deps)
+                    await telegram.send(response)
+        except Exception as e:
+            logger.error(f"Telegram command error: {e}")
+        await asyncio.sleep(3)
 
 
 async def spot_futures_scanner_loop():
@@ -160,7 +188,7 @@ if settings.operation_mode == "paper":
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _scan_task, _ws_task, _sf_task
+    global _scan_task, _ws_task, _sf_task, _tg_task
     logger.info("Starting crypto-arbitrage backend...")
     logger.info(
         f"Mode: {settings.operation_mode} | "
@@ -184,6 +212,11 @@ async def lifespan(app: FastAPI):
     # Start spot-futures scanner
     _sf_task = asyncio.create_task(spot_futures_scanner_loop())
 
+    # Start Telegram command polling
+    if telegram.is_configured:
+        _tg_task = asyncio.create_task(telegram_command_loop())
+        logger.info("Telegram commands enabled")
+
     yield
 
     logger.info("Shutting down...")
@@ -201,6 +234,10 @@ async def lifespan(app: FastAPI):
         _sf_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _sf_task
+    if _tg_task:
+        _tg_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _tg_task
     await exchange.close()
     await futures_exchange.close()
 
