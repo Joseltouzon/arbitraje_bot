@@ -10,7 +10,9 @@ export function ActivityLog() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const logCountRef = useRef(0);
+  const wasConnectedRef = useRef(false);
 
   const addLog = (type: LogEntry['type'], message: string) => {
     const now = new Date();
@@ -25,7 +27,20 @@ export function ActivityLog() {
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
         wsRef.current = ws;
 
-        ws.onopen = () => addLog('info', 'Connected to server');
+        ws.onopen = () => {
+          // Only log if this is a real reconnect (was disconnected for >5s)
+          if (wasConnectedRef.current) {
+            // Don't log reconnects from brief disconnects
+          } else {
+            addLog('info', 'Connected to server');
+          }
+          wasConnectedRef.current = true;
+          // Cancel pending disconnect log
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
+        };
 
         ws.onmessage = (event) => {
           try {
@@ -50,10 +65,8 @@ export function ActivityLog() {
               const t = data.data;
               addLog('cycle', `LIVE: ${t.currencies.join('→')} ${t.profit_usdt >= 0 ? '+' : ''}$${t.profit_usdt.toFixed(4)} [${t.status}]`);
             }
-
-            // Every 100 messages = 1 scan cycle completed
-            if (logCountRef.current % 100 === 0) {
-              addLog('scan', `Scan #${logCountRef.current} completed`);
+            if (data.type === 'sf_trade' && data.data) {
+              addLog('spot_futures', `Executed: ${data.data.symbol} [${data.data.status}]`);
             }
           } catch {
             // ignore
@@ -61,7 +74,16 @@ export function ActivityLog() {
         };
 
         ws.onclose = () => {
-          addLog('info', 'Disconnected');
+          // Delay disconnect log by 5s to avoid spam from brief drops
+          if (!disconnectTimerRef.current) {
+            disconnectTimerRef.current = setTimeout(() => {
+              if (wasConnectedRef.current) {
+                addLog('info', 'Connection lost, reconnecting...');
+              }
+              disconnectTimerRef.current = null;
+            }, 5000);
+          }
+          wasConnectedRef.current = false;
           reconnectRef.current = setTimeout(connect, 3000);
         };
 
@@ -74,6 +96,7 @@ export function ActivityLog() {
     connect();
     return () => {
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       wsRef.current?.close();
     };
   }, []);
