@@ -150,7 +150,7 @@ function App() {
 
       {tab === 'dashboard' && (
         <>
-          <StatsCard cycles={cycles} />
+          <StatsCard currentCycles={cycles.length} />
           <div className="flex-1 flex gap-4 p-4 overflow-hidden">
             <div className="flex-1 overflow-y-auto space-y-4">
               <CycleList cycles={cycles} connected={connected} />

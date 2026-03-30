@@ -12,6 +12,8 @@
 | 6 | Filtro de quote currencies expandido (941 pares vs 100) | Medio | `d604463` |
 | 7 | Monitoreo de volatilidad (scan adaptivo) | Medio | `773a163` |
 | 8 | Spot-Futures arbitrage (premium detector + DB + UI) | Alto | `3f98e4c`, `c36ac49` |
+| 9 | Spot-Futures executor (auto open/close positions) | Alto | `f452bc8` |
+| 10 | Dashboard improvements (ActivityLog, VolatilityGauge) | Medio | `ac6bfea` |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 

@@ -1,25 +1,23 @@
 import { useState, useEffect } from 'react';
-import { fetchSpotFuturesStats } from '../../lib/api';
-
-interface SFStats {
-  opportunities: number;
-  last_scan: string | null;
-  top_opportunity: {
-    symbol: string;
-    premium_pct: number;
-    net_profit_pct: number;
-    funding_rate: number;
-  } | null;
-}
+import { fetchSpotFuturesStats, fetchSpotFuturesHistory } from '../../lib/api';
+import { formatTime } from '../../lib/utils';
 
 export function SpotFuturesStats() {
-  const [stats, setStats] = useState<SFStats | null>(null);
+  const [stats, setStats] = useState<{
+    opportunities: number;
+    last_scan: string | null;
+  } | null>(null);
+  const [historyCount, setHistoryCount] = useState(0);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const data = await fetchSpotFuturesStats();
-        setStats(data);
+        const [s, h] = await Promise.all([
+          fetchSpotFuturesStats(),
+          fetchSpotFuturesHistory(200),
+        ]);
+        setStats(s);
+        setHistoryCount(h.count || 0);
       } catch {
         // ignore
       }
@@ -29,30 +27,26 @@ export function SpotFuturesStats() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!stats) return null;
-
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-      <h3 className="text-white font-semibold mb-4">Spot-Futures Scanner</h3>
+      <h3 className="text-white font-semibold mb-3">Spot-Futures Scanner</h3>
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-gray-900/50 rounded p-3">
-          <p className="text-gray-500 text-xs">Opportunities Found</p>
+          <p className="text-gray-500 text-xs">Total Detected</p>
           <p className="text-blue-400 text-lg font-bold font-mono">
-            {stats.opportunities}
+            {historyCount}
           </p>
         </div>
         <div className="bg-gray-900/50 rounded p-3">
-          <p className="text-gray-500 text-xs">Best Premium</p>
-          <p className="text-green-400 text-lg font-bold font-mono">
-            {stats.top_opportunity
-              ? `${stats.top_opportunity.premium_pct.toFixed(3)}%`
-              : '-'}
-          </p>
-        </div>
-        <div className="bg-gray-900/50 rounded p-3">
-          <p className="text-gray-500 text-xs">Best Symbol</p>
+          <p className="text-gray-500 text-xs">Current Scan</p>
           <p className="text-white text-lg font-bold font-mono">
-            {stats.top_opportunity?.symbol || '-'}
+            {stats?.opportunities ?? 0}
+          </p>
+        </div>
+        <div className="bg-gray-900/50 rounded p-3">
+          <p className="text-gray-500 text-xs">Last Scan</p>
+          <p className="text-gray-300 text-sm font-mono">
+            {stats?.last_scan ? formatTime(stats.last_scan) : '-'}
           </p>
         </div>
       </div>
