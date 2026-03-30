@@ -9,6 +9,7 @@ from app.services.live_executor import LiveExecutor
 from app.services.paper_trader import PaperTrader
 from app.services.price_aggregator import PriceAggregator
 from app.services.spot_futures import SpotFuturesDetector
+from app.services.spot_futures_executor import SpotFuturesExecutor
 from app.services.telegram import TelegramNotifier
 from app.services.volatility import VolatilityMonitor
 
@@ -18,6 +19,7 @@ futures_exchange = BinanceFuturesAdapter()
 aggregator = PriceAggregator()
 scanner = CycleScanner(aggregator=aggregator)
 spot_futures = SpotFuturesDetector(futures_exchange)
+sf_executor = SpotFuturesExecutor(spot=exchange, futures=futures_exchange)
 cycle_logger = CycleLogger()
 risk_manager = RiskManager()
 
@@ -51,3 +53,7 @@ def get_live_executor() -> LiveExecutor:
 
 def get_spot_futures() -> SpotFuturesDetector:
     return spot_futures
+
+
+def get_sf_executor() -> SpotFuturesExecutor:
+    return sf_executor

@@ -27,6 +27,7 @@ from app.deps import (
     live_executor,
     paper_trader,
     scanner,
+    sf_executor,
     spot_futures,
     telegram,
     volatility,
@@ -42,25 +43,44 @@ _sf_task: asyncio.Task | None = None
 
 
 async def spot_futures_scanner_loop():
-    """Background loop for spot-futures arbitrage scanning.
-    Only takes the BEST opportunity per scan (no concurrent positions)."""
+    """Background loop for spot-futures arbitrage scanning and execution."""
     while True:
         try:
             if aggregator.tickers:
                 opportunities = await spot_futures.scan(aggregator.tickers)
                 if opportunities:
-                    # Take only the best one per scan
                     best = opportunities[0]
                     await ws_manager.broadcast(
                         {"type": "spot_futures", "data": best}
                     )
                     await cycle_logger.log_spot_futures(best)
-                    await telegram.send(
-                        f"🔄 <b>Spot-Futures</b>\n"
-                        f"{best['symbol']}: {best['premium_pct']:.3f}% premium\n"
-                        f"Net: {best['net_profit_pct']:.3f}%\n"
-                        f"Dir: {best['direction']}"
-                    )
+
+                    # Execute if enabled
+                    result = await sf_executor.execute(best)
+                    if result:
+                        await ws_manager.broadcast(
+                            {"type": "sf_trade", "data": result}
+                        )
+                        await telegram.send(
+                            f"🔄 <b>Spot-Futures Executed</b>\n"
+                            f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
+                            f"Dir: {best['direction']}"
+                        )
+
+                    # Check if we should close existing position
+                    if (
+                        sf_executor.has_position
+                        and await sf_executor.should_close(aggregator.tickers)
+                    ):
+                        close_r = await sf_executor.close_position(aggregator.tickers)
+                        if close_r:
+                            await ws_manager.broadcast(
+                                {"type": "sf_trade", "data": close_r}
+                            )
+                            await telegram.send(
+                                f"✅ <b>Spot-Futures Closed</b>\n"
+                                f"{close_r['symbol']}"
+                            )
         except Exception as e:
             logger.error(f"Spot-futures scan error: {e}")
         await asyncio.sleep(10)
@@ -231,6 +251,7 @@ async def health() -> dict[str, Any]:
         "telegram": telegram.get_stats(),
         "volatility": volatility.get_stats(),
         "spot_futures": spot_futures.get_stats(),
+        "sf_executor": sf_executor.get_stats(),
     }
 
 
