@@ -80,7 +80,7 @@ interface LiveTrade {
 }
 
 function App() {
-  const { cycles, spotFutures, connected } = useWebSocket();
+  const { cycles, spotFutures, connected, logs } = useWebSocket();
   const [tab, setTab] = useState<Tab>('dashboard');
   const [paperStats, setPaperStats] = useState<PaperStats | null>(null);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
@@ -156,7 +156,7 @@ function App() {
               <CycleList cycles={cycles} connected={connected} />
               <SpotFuturesStats />
               <SpotFuturesFeed opportunities={spotFutures} />
-              <ActivityLog />
+              <ActivityLog logs={logs} />
             </div>
             <div className="w-96 space-y-4 overflow-y-auto">
               <VolatilityGauge />

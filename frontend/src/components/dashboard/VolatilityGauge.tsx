@@ -1,22 +1,20 @@
 import { useState, useEffect } from 'react';
-import { fetchHealth } from '../../lib/api';
-
-interface VolatilityData {
-  volatility_score: number;
-  is_volatile: boolean;
-  update_count: number;
-}
 
 export function VolatilityGauge() {
-  const [data, setData] = useState<VolatilityData | null>(null);
+  const [score, setScore] = useState(0);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const health = await fetchHealth();
-        setData(health.volatility || null);
+        const res = await fetch('/health');
+        const data = await res.json();
+        if (data.volatility) {
+          setScore(data.volatility.volatility_score || 0);
+        }
+        setLoaded(true);
       } catch {
-        // ignore
+        setLoaded(true);
       }
     };
     load();
@@ -24,12 +22,34 @@ export function VolatilityGauge() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!data) return null;
+  const s = Math.min(score, 100);
+  const color =
+    s > 60
+      ? 'bg-red-500'
+      : s > 40
+        ? 'bg-yellow-500'
+        : s > 20
+          ? 'bg-blue-500'
+          : 'bg-gray-500';
+  const label =
+    s > 60 ? 'HIGH' : s > 40 ? 'ELEVATED' : s > 20 ? 'NORMAL' : 'LOW';
+  const textColor =
+    s > 60
+      ? 'text-red-400'
+      : s > 40
+        ? 'text-yellow-400'
+        : s > 20
+          ? 'text-blue-400'
+          : 'text-gray-400';
 
-  const score = Math.min(data.volatility_score, 100);
-  const color = score > 60 ? 'bg-red-500' : score > 40 ? 'bg-yellow-500' : score > 20 ? 'bg-blue-500' : 'bg-gray-500';
-  const label = score > 60 ? 'HIGH' : score > 40 ? 'ELEVATED' : score > 20 ? 'NORMAL' : 'LOW';
-  const textColor = score > 60 ? 'text-red-400' : score > 40 ? 'text-yellow-400' : score > 20 ? 'text-blue-400' : 'text-gray-400';
+  if (!loaded) {
+    return (
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 className="text-white font-semibold text-sm">Market Volatility</h3>
+        <p className="text-gray-500 text-xs mt-2">Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
@@ -40,12 +60,12 @@ export function VolatilityGauge() {
       <div className="w-full bg-gray-700 rounded-full h-3">
         <div
           className={`${color} h-3 rounded-full transition-all duration-500`}
-          style={{ width: `${score}%` }}
+          style={{ width: `${s}%` }}
         />
       </div>
       <div className="flex justify-between mt-1 text-xs text-gray-500">
         <span>0</span>
-        <span className="font-mono">{score.toFixed(1)}</span>
+        <span className="font-mono">{s.toFixed(1)}</span>
         <span>100</span>
       </div>
     </div>
