@@ -31,6 +31,7 @@ interface LiveDashboardProps {
   trades: LiveTrade[];
   onPause: () => void;
   onResume: () => void;
+  onStart: () => void;
   onDisable: () => void;
 }
 
@@ -39,10 +40,12 @@ export function LiveDashboard({
   trades,
   onPause,
   onResume,
+  onStart,
   onDisable,
 }: LiveDashboardProps) {
   if (!stats) return null;
 
+  const isStopped = !stats.enabled;
   const profitColor =
     stats.total_profit_usdt >= 0 ? 'text-green-400' : 'text-red-400';
 
@@ -53,7 +56,14 @@ export function LiveDashboard({
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-white font-semibold">Live Trading</h3>
           <div className="flex gap-2">
-            {stats.risk.paused ? (
+            {isStopped ? (
+              <button
+                onClick={onStart}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-medium"
+              >
+                Start
+              </button>
+            ) : stats.risk.paused ? (
               <button
                 onClick={onResume}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
@@ -61,19 +71,21 @@ export function LiveDashboard({
                 Resume
               </button>
             ) : (
-              <button
-                onClick={onPause}
-                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm"
-              >
-                Pause
-              </button>
+              <>
+                <button
+                  onClick={onPause}
+                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm"
+                >
+                  Pause
+                </button>
+                <button
+                  onClick={onDisable}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+                >
+                  Stop
+                </button>
+              </>
             )}
-            <button
-              onClick={onDisable}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
-            >
-              Stop
-            </button>
           </div>
         </div>
 
@@ -82,10 +94,14 @@ export function LiveDashboard({
             <p className="text-gray-500 text-xs">State</p>
             <p
               className={`font-medium ${
-                stats.risk.paused ? 'text-yellow-400' : 'text-green-400'
+                isStopped
+                  ? 'text-red-400'
+                  : stats.risk.paused
+                    ? 'text-yellow-400'
+                    : 'text-green-400'
               }`}
             >
-              {stats.risk.paused ? 'Paused' : 'Active'}
+              {isStopped ? 'Stopped' : stats.risk.paused ? 'Paused' : 'Active'}
             </p>
           </div>
           <div>

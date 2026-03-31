@@ -186,6 +186,9 @@ if settings.operation_mode == "paper":
     paper_trader.enable()
 
 if settings.auto_trade:
+    live_executor.enable()
+    live_executor.confirm()
+    live_executor.risk.resume()
     sf_executor.enable()
     sf_executor.confirm()
 
