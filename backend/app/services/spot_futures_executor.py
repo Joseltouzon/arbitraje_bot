@@ -25,6 +25,8 @@ class SpotFuturesPosition:
     futures_quantity: Decimal
     futures_price: float
     premium_pct: float
+    initial_spot_usdt: float = 0.0
+    initial_futures_usdt: float = 0.0
     opened_at: datetime = field(default_factory=datetime.now)
 
 
@@ -101,6 +103,7 @@ class SpotFuturesExecutor:
 
         # Only execute if net profit is positive
         if net_profit_pct <= 0:
+            logger.info(f"SKIP {symbol}: net_profit={net_profit_pct:.4f}% <= 0")
             return None
 
         self._trade_count += 1
@@ -115,11 +118,11 @@ class SpotFuturesExecutor:
             return None
 
         if spot_usdt < Decimal("10"):
-            logger.warning(f"Insufficient spot USDT: {spot_usdt}")
+            logger.warning(f"SKIP {symbol}: spot too low {spot_usdt}")
             return None
 
         if futures_usdt < Decimal("5"):
-            logger.warning(f"Insufficient futures USDT: {futures_usdt}")
+            logger.warning(f"SKIP {symbol}: futures too low {futures_usdt}")
             return None
 
         # Use 90% of available spot USDT
@@ -162,6 +165,8 @@ class SpotFuturesExecutor:
                 futures_quantity=futures_qty,
                 futures_price=futures_price,
                 premium_pct=premium_pct,
+                initial_spot_usdt=float(spot_usdt),
+                initial_futures_usdt=float(futures_usdt),
             )
 
             duration = (time.time() - start_time) * 1000
@@ -216,12 +221,11 @@ class SpotFuturesExecutor:
                     side="BUY",
                     quantity=pos.futures_quantity,
                 )
-                spot_pnl = float(sell_result.get("cummulativeQuoteQty", 0))
+                float(sell_result.get("cummulativeQuoteQty", 0))
             else:
                 # Discount: had futures long
                 # Close: sell futures
                 await self._close_futures_long(pos.symbol, pos.futures_quantity)
-                spot_pnl = 0
 
             # Transfer profit from futures to spot
             futures_bal = await self.futures.get_futures_usdt_balance()
@@ -230,6 +234,13 @@ class SpotFuturesExecutor:
                     "USDT", futures_bal * Decimal("0.99")
                 )
 
+            # Calculate P&L
+            final_spot = float(await self.spot.get_balance("USDT"))
+            initial_total = pos.initial_spot_usdt + pos.initial_futures_usdt
+            final_total = final_spot + float(futures_bal)
+            pnl_usdt = final_total - initial_total
+            pnl_pct = (pnl_usdt / initial_total * 100) if initial_total > 0 else 0
+
             self._trade_count += 1
 
             result = {
@@ -237,7 +248,10 @@ class SpotFuturesExecutor:
                 "symbol": pos.symbol,
                 "direction": pos.direction,
                 "status": "closed",
-                "spot_sell_usdt": spot_pnl,
+                "pnl_usdt": round(pnl_usdt, 4),
+                "pnl_pct": round(pnl_pct, 4),
+                "initial_balance": round(initial_total, 2),
+                "final_balance": round(final_total, 2),
                 "message": f"Position closed: {pos.symbol}",
             }
 

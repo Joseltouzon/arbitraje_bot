@@ -84,15 +84,24 @@ async def spot_futures_scanner_loop():
                     await cycle_logger.log_spot_futures(best)
 
                     # Execute if enabled
+                    logger.info(
+                        f"SF opportunity: {best['symbol']} "
+                        f"premium={best['premium_pct']:.4f}% "
+                        f"net={best['net_profit_pct']:.4f}% "
+                        f"dir={best['direction']}"
+                    )
                     result = await sf_executor.execute(best)
                     if result:
+                        logger.info(f"SF EXECUTED: {result}")
                         await ws_manager.broadcast(
                             {"type": "sf_trade", "data": result}
                         )
+                        spot_cost = best['spot_price'] * float(result.get('spot_quantity', 0))
                         await telegram.send(
-                            f"🔄 <b>Spot-Futures Executed</b>\n"
+                            f"🔄 <b>Spot-Futures Opened</b>\n"
                             f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
-                            f"Dir: {best['direction']}"
+                            f"Dir: {best['direction']}\n"
+                            f"Amount: ${spot_cost:.2f}"
                         )
 
                     # Check if we should close existing position
@@ -105,9 +114,14 @@ async def spot_futures_scanner_loop():
                             await ws_manager.broadcast(
                                 {"type": "sf_trade", "data": close_r}
                             )
+                            pnl = close_r.get("pnl_usdt", 0)
+                            emoji = "✅" if pnl >= 0 else "❌"
                             await telegram.send(
-                                f"✅ <b>Spot-Futures Closed</b>\n"
-                                f"{close_r['symbol']}"
+                                f"{emoji} <b>Spot-Futures Closed</b>\n"
+                                f"{close_r['symbol']}\n"
+                                f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.4f}</b> "
+                                f"({close_r.get('pnl_pct', 0):.3f}%)\n"
+                                f"Balance: ${close_r.get('final_balance', 0):.2f}"
                             )
         except Exception as e:
             logger.error(f"Spot-futures scan error: {e}")

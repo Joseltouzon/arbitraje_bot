@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { formatUsdt } from '../../lib/utils';
 
 interface LiveStats {
@@ -43,6 +44,27 @@ export function LiveDashboard({
   onStart,
   onDisable,
 }: LiveDashboardProps) {
+  const [balance, setBalance] = useState<{
+    spot_usdt: number;
+    futures_usdt: number;
+    total_usdt: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/prices/balance');
+        const data = await res.json();
+        setBalance(data);
+      } catch {
+        // ignore
+      }
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (!stats) return null;
 
   const isStopped = !stats.enabled;
@@ -89,77 +111,74 @@ export function LiveDashboard({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        {/* Stats */}
+        <div className="grid grid-cols-4 gap-4">
           <div>
-            <p className="text-gray-500 text-xs">State</p>
-            <p
-              className={`font-medium ${
-                isStopped
-                  ? 'text-red-400'
-                  : stats.risk.paused
-                    ? 'text-yellow-400'
-                    : 'text-green-400'
-              }`}
-            >
-              {isStopped ? 'Stopped' : stats.risk.paused ? 'Paused' : 'Active'}
+            <p className="text-gray-500 text-xs">Spot Balance</p>
+            <p className="text-white font-mono text-lg">
+              ${balance?.spot_usdt?.toFixed(2) ?? '...'}
             </p>
           </div>
           <div>
-            <p className="text-gray-500 text-xs">Total Trades</p>
-            <p className="text-white font-mono">{stats.total_trades}</p>
+            <p className="text-gray-500 text-xs">Futures Balance</p>
+            <p className="text-blue-400 font-mono text-lg">
+              ${balance?.futures_usdt?.toFixed(2) ?? '...'}
+            </p>
           </div>
           <div>
-            <p className="text-gray-500 text-xs">Net P&L</p>
-            <p className={`font-mono ${profitColor}`}>
+            <p className="text-gray-500 text-xs">P&L</p>
+            <p className={`font-mono text-lg ${profitColor}`}>
               {formatUsdt(stats.total_profit_usdt)}
             </p>
+          </div>
+          <div>
+            <p className="text-gray-500 text-xs">Trades</p>
+            <p className="text-white font-mono text-lg">{stats.total_trades}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-700">
+          <div>
+            <p className="text-gray-500 text-xs">Win Rate</p>
+            <p className="text-yellow-400 font-mono">
+              {stats.success_rate.toFixed(1)}%
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500 text-xs">Total Fees</p>
+            <p className="text-red-400 font-mono">
+              {formatUsdt(stats.total_fees_usdt)}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500 text-xs">Streak</p>
+            <p
+              className={`font-mono ${
+                stats.risk.consecutive_losses > 0
+                  ? 'text-red-400'
+                  : 'text-gray-300'
+              }`}
+            >
+              {stats.risk.consecutive_losses > 0
+                ? `${stats.risk.consecutive_losses} losses`
+                : 'OK'}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500 text-xs">Failed</p>
+            <p className="text-red-400 font-mono">{stats.failed_trades}</p>
           </div>
         </div>
       </div>
 
-      {/* Stats */}
-      {stats.total_trades > 0 && (
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <h3 className="text-white font-semibold mb-3">Performance</h3>
-          <div className="grid grid-cols-4 gap-3">
-            <div>
-              <p className="text-gray-500 text-xs">Win Rate</p>
-              <p className="text-yellow-400 font-mono">
-                {stats.success_rate.toFixed(1)}%
-              </p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Won</p>
-              <p className="text-green-400 font-mono">
-                {stats.profitable_trades}
-              </p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Failed</p>
-              <p className="text-red-400 font-mono">{stats.failed_trades}</p>
-            </div>
-            <div>
-              <p className="text-gray-500 text-xs">Total Fees</p>
-              <p className="text-red-400 font-mono">
-                {formatUsdt(stats.total_fees_usdt)}
-              </p>
-            </div>
-          </div>
-
-          {stats.risk.consecutive_losses > 0 && (
-            <div className="mt-3 bg-red-900/30 border border-red-800 rounded p-2 text-sm">
-              <span className="text-red-400">
-                Warning: {stats.risk.consecutive_losses} consecutive losses
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Recent Trades */}
-      {trades.length > 0 && (
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <h3 className="text-white font-semibold mb-3">Recent Trades</h3>
+      {/* Recent Trades - always visible */}
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+        <h3 className="text-white font-semibold mb-3">Recent Trades</h3>
+        {trades.length === 0 ? (
+          <p className="text-gray-500 text-center py-4">
+            No trades yet. Waiting for opportunities...
+          </p>
+        ) : (
           <div className="space-y-2 max-h-60 overflow-y-auto">
             {trades.map((trade) => (
               <div
@@ -200,8 +219,8 @@ export function LiveDashboard({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

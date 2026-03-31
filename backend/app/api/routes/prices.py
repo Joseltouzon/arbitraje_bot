@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.deps import get_aggregator
+from app.deps import exchange, futures_exchange, get_aggregator
 from app.services.price_aggregator import PriceAggregator
 
 router = APIRouter()
@@ -26,6 +26,24 @@ async def get_all_tickers(agg: PriceAggregator = Depends(get_aggregator)):
         "tickers": result,
         "total": len(tickers),
         "ws_connected": agg.connected,
+    }
+
+
+@router.get("/balance")
+async def get_balance():
+    """Get spot and futures USDT balance."""
+    try:
+        spot_usdt = float(await exchange.get_balance("USDT"))
+    except Exception:
+        spot_usdt = 0
+    try:
+        futures_usdt = float(await futures_exchange.get_futures_usdt_balance())
+    except Exception:
+        futures_usdt = 0
+    return {
+        "spot_usdt": round(spot_usdt, 2),
+        "futures_usdt": round(futures_usdt, 2),
+        "total_usdt": round(spot_usdt + futures_usdt, 2),
     }
 
 

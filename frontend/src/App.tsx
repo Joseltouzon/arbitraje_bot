@@ -120,10 +120,10 @@ function App() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'paper', label: 'Paper' },
     { id: 'live', label: 'Live' },
     { id: 'history', label: 'History' },
     { id: 'analytics', label: 'Analytics' },
+    { id: 'paper', label: 'Paper' },
   ];
 
   return (
