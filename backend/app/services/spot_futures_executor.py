@@ -145,10 +145,13 @@ class SpotFuturesExecutor:
                     return None
 
             else:
-                # futures_discount: Sell spot (need asset) + Buy futures
-                # For now, skip discount (need to hold asset)
-                logger.info("Discount strategy not implemented yet, skipping")
-                return None
+                # futures_discount: Futures cheaper than spot
+                # Strategy: Buy futures (long) + hold until discount closes
+                futures_qty = await self._buy_futures(symbol, spot_spend)
+                if futures_qty <= Decimal("0"):
+                    return None
+
+                spot_qty = Decimal("0")  # No spot position for discount
 
             # Open position
             self._position = SpotFuturesPosition(
@@ -200,19 +203,25 @@ class SpotFuturesExecutor:
         logger.info(f"Closing position: {pos.symbol} {pos.direction}")
 
         try:
-            # Sell spot
-            sell_result = await self.spot.create_market_order(
-                symbol=pos.symbol,
-                side="SELL",
-                quantity=pos.spot_quantity,
-            )
-
-            # Buy back futures (close short)
-            await self.futures.create_futures_market_order(
-                symbol=pos.symbol,
-                side="BUY",
-                quantity=pos.futures_quantity,
-            )
+            if pos.direction == "futures_premium":
+                # Premium: had spot long + futures short
+                # Close: sell spot + buy back futures
+                sell_result = await self.spot.create_market_order(
+                    symbol=pos.symbol,
+                    side="SELL",
+                    quantity=pos.spot_quantity,
+                )
+                await self.futures.create_futures_market_order(
+                    symbol=pos.symbol,
+                    side="BUY",
+                    quantity=pos.futures_quantity,
+                )
+                spot_pnl = float(sell_result.get("cummulativeQuoteQty", 0))
+            else:
+                # Discount: had futures long
+                # Close: sell futures
+                await self._close_futures_long(pos.symbol, pos.futures_quantity)
+                spot_pnl = 0
 
             # Transfer profit from futures to spot
             futures_bal = await self.futures.get_futures_usdt_balance()
@@ -221,8 +230,6 @@ class SpotFuturesExecutor:
                     "USDT", futures_bal * Decimal("0.99")
                 )
 
-            # Calculate P&L
-            spot_pnl = float(sell_result.get("cummulativeQuoteQty", 0))
             self._trade_count += 1
 
             result = {
@@ -269,15 +276,18 @@ class SpotFuturesExecutor:
         if pos.direction == "futures_premium" and current_premium < 0.05:
             return True
 
-        # Close when premium goes negative (over-converged)
-        return bool(pos.direction == "futures_premium" and current_premium < 0)
+        # Close when discount converges (premium rises above -0.05%)
+        return bool(pos.direction == "futures_discount" and current_premium > -0.05)
 
     async def _buy_spot(self, symbol: str, asset: str, amount: Decimal) -> Decimal:
-        """Buy asset in spot using quoteOrderQty."""
+        """Buy asset in spot."""
+        ticker = await self.spot.get_ticker(symbol)
+        qty = (amount * Decimal("0.99")) / Decimal(str(ticker.ask))
+        qty = qty.quantize(Decimal("0.00001"))
         await self.spot.create_market_order(
             symbol=symbol,
             side="BUY",
-            quantity=amount / Decimal("100"),  # placeholder
+            quantity=qty,
         )
         # Use quoteOrderQty approach via the adapter
         # For now, calculate quantity from amount and price
@@ -305,7 +315,6 @@ class SpotFuturesExecutor:
 
     async def _sell_futures(self, symbol: str, quantity: Decimal) -> Decimal:
         """Short asset in futures."""
-        # Round to lot size
         qty = quantity.quantize(Decimal("0.001"))
         await self.futures.create_futures_market_order(
             symbol=symbol,
@@ -314,6 +323,32 @@ class SpotFuturesExecutor:
         )
         logger.info(f"Shorted {qty} {symbol} in futures")
         return qty
+
+    async def _buy_futures(self, symbol: str, amount_usdt: Decimal) -> Decimal:
+        """Buy asset in futures (long)."""
+        price = await self.futures.get_futures_price(symbol)
+        if price <= 0:
+            return Decimal("0")
+        qty = (amount_usdt * Decimal("0.99")) / Decimal(str(price))
+        qty = qty.quantize(Decimal("0.001"))
+        await self.futures.create_futures_market_order(
+            symbol=symbol,
+            side="BUY",
+            quantity=qty,
+        )
+        logger.info(f"Bought {qty} {symbol} futures (long)")
+        return qty
+
+    async def _close_futures_long(self, symbol: str, quantity: Decimal) -> dict:
+        """Close a futures long position (sell)."""
+        qty = quantity.quantize(Decimal("0.001"))
+        result = await self.futures.create_futures_market_order(
+            symbol=symbol,
+            side="SELL",
+            quantity=qty,
+        )
+        logger.info(f"Closed futures long: sold {qty} {symbol}")
+        return result
 
     def get_stats(self) -> dict[str, Any]:
         return {
