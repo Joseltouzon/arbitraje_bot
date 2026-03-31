@@ -5,6 +5,7 @@ import hmac
 import time
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -211,6 +212,113 @@ class BinanceAdapter(ExchangeAdapter):
         resp = await self.client.delete("/api/v3/order", params=params)
         resp.raise_for_status()
         return resp.json()
+
+    async def get_all_balances(self) -> list[dict]:
+        """GET /api/v3/account - get all non-zero balances."""
+        if not self.api_key or not self.api_secret:
+            return []
+        params = self._sign({})
+        resp = await self.client.get("/api/v3/account", params=params)
+        resp.raise_for_status()
+        balances = []
+        for b in resp.json().get("balances", []):
+            free = float(b["free"])
+            if free > 0:
+                balances.append({"asset": b["asset"], "free": free})
+        return balances
+
+    async def convert_dust(self, assets: list[str]) -> dict:
+        """POST /sapi/v1/asset/dust - convert small balances to BNB."""
+        if not self.api_key or not self.api_secret or not assets:
+            return {}
+        params: dict[str, Any] = {
+            "timestamp": int(time.time() * 1000),
+        }
+        # Binance expects: asset=BTC&asset=ETH&asset=USDC
+        query_parts = [f"asset={a}" for a in assets]
+        query_parts.append(f"timestamp={params['timestamp']}")
+        query_string = "&".join(query_parts)
+        signature = hmac.new(
+            self.api_secret.encode(),
+            query_string.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        query_string += f"&signature={signature}"
+
+        resp = await self.client.post(
+            f"/sapi/v1/asset/dust?{query_string}",
+            headers={"X-MBX-APIKEY": self.api_key},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def cleanup_dust(self) -> dict[str, Any]:
+        """
+        Clean up small remaining balances after a trade.
+        1. Sell any balance > $1 directly
+        2. Convert tiny balances to BNB via dust API
+        3. Sell BNB to USDT
+        """
+        from decimal import Decimal
+
+        result = {"sold": [], "dust_converted": [], "total_recovered": 0.0}
+        balances = await self.get_all_balances()
+        dust_assets = []
+
+        for bal in balances:
+            asset = bal["asset"]
+            free = bal["free"]
+
+            if asset in ("USDT", "BNB"):
+                continue
+
+            # Get approximate value in USDT
+            try:
+                symbol = f"{asset}USDT"
+                ticker = await self.get_ticker(symbol)
+                value = free * ticker.bid
+            except Exception:
+                value = 0
+
+            if value >= 5.0:
+                # Sell directly
+                try:
+                    qty = Decimal(str(free)).quantize(
+                        Decimal("0.00001"), rounding=Decimal.ROUND_DOWN
+                    )
+                    if qty > 0:
+                        await self.create_market_order(symbol, "SELL", qty)
+                        result["sold"].append(asset)
+                        result["total_recovered"] += value
+                except Exception:
+                    dust_assets.append(asset)
+            elif value > 0.01:
+                dust_assets.append(asset)
+
+        # Convert dust to BNB
+        if dust_assets:
+            try:
+                await self.convert_dust(dust_assets)
+                result["dust_converted"] = dust_assets
+            except Exception as e:
+                logger.error(f"Dust conversion failed: {e}")
+
+        # Sell BNB to USDT if enough value (min notional ~$5)
+        try:
+            bnb_bal = await self.get_balance("BNB")
+            bnb_ticker = await self.get_ticker("BNBUSDT")
+            bnb_value = float(bnb_bal) * bnb_ticker.bid
+            if bnb_value >= 5.0:
+                bnb_qty = bnb_bal.quantize(
+                    Decimal("0.001"), rounding=Decimal.ROUND_DOWN
+                )
+                await self.create_market_order("BNBUSDT", "SELL", bnb_qty)
+                result["sold"].append("BNB")
+                result["total_recovered"] += bnb_value
+        except Exception:
+            pass
+
+        return result
 
     async def close(self) -> None:
         await self.client.aclose()

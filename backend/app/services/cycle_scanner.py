@@ -32,6 +32,8 @@ class CycleScanner:
         self._last_scan_time: datetime | None = None
         self._callbacks: list[CycleCallback] = []
         self._scan_errors = 0
+        self._trade_amount: float = settings.trade_amount_usdt
+        self._last_balance_fetch: datetime | None = None
 
     @property
     def cycles(self) -> list[dict[str, Any]]:
@@ -55,6 +57,15 @@ class CycleScanner:
             return []
 
         self._tickers = tickers
+
+        # Update balance every 30 seconds
+        now = datetime.now()
+        if (
+            self._last_balance_fetch is None
+            or (now - self._last_balance_fetch).total_seconds() > 30
+        ):
+            await self._update_balance()
+            self._last_balance_fetch = now
 
         # Filter to pairs with sufficient liquidity
         filtered = self.aggregator.get_quote_prices(tickers)
@@ -88,10 +99,22 @@ class CycleScanner:
                 if key not in seen:
                     seen.add(key)
 
+                    # Apply realistic rates (buy at ask, sell at bid)
+                    realistic_rates = []
+                    for leg in cycle["legs"]:
+                        if leg["side"] == "buy":
+                            ask_p = leg["ask"]
+                            realistic_rates.append(1 / ask_p if ask_p > 0 else leg["rate"])
+                        else:
+                            bid_p = leg["bid"]
+                            realistic_rates.append(bid_p if bid_p > 0 else leg["rate"])
+
                     # Enrich with profit calculations
+                    fallback = [leg["rate"] for leg in cycle["legs"]]
+                    rates_to_use = realistic_rates if realistic_rates else fallback
                     result = calculate_cycle_profit(
-                        initial_amount=settings.trade_amount_usdt,
-                        rates=[leg["rate"] for leg in cycle["legs"]],
+                        initial_amount=self._trade_amount,
+                        rates=rates_to_use,
                         fee_rate=0.001,
                         slippage_pct=0.001,
                     )
@@ -169,4 +192,16 @@ class CycleScanner:
             "top_profit": self._cycles[0]["net_profit_pct"] if self._cycles else 0,
             "tickers_loaded": len(self._tickers),
             "start_currencies": settings.start_currency_list,
+            "trade_amount": self._trade_amount,
         }
+
+    async def _update_balance(self) -> None:
+        """Fetch real balance from Binance for profit calculations."""
+        try:
+            from app.deps import exchange
+            balance = await exchange.get_balance("USDT")
+            bal_float = float(balance)
+            if bal_float > 10:
+                self._trade_amount = bal_float
+        except Exception:
+            pass

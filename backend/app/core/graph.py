@@ -57,6 +57,13 @@ def build_currency_graph(
                 skipped += 1
                 continue
 
+        # Filter by spread: skip pairs with spread > 0.5%
+        if bidask.bid > 0:
+            spread_pct = (bidask.ask - bidask.bid) / bidask.bid * 100
+            if spread_pct > 0.5:
+                skipped += 1
+                continue
+
         if base not in graph:
             graph[base] = {}
             metadata[base] = {}

@@ -178,6 +178,42 @@ class LiveExecutor:
         trade_legs: list[LiveTradeLeg] = []
         status = "completed"
 
+        # Pre-validate all legs with order book
+        for leg in legs:
+            pair = leg["pair"]
+            if pair not in tickers:
+                logger.warning(f"SKIP: no ticker for {pair}")
+                return None
+            ticker = tickers[pair]
+
+            # Check spread
+            spread = (ticker.ask - ticker.bid) / ticker.bid * 100 if ticker.bid > 0 else 100
+            if spread > 0.5:
+                logger.warning(f"SKIP: {pair} spread too high ({spread:.2f}%)")
+                return None
+
+            # Check order book depth
+            try:
+                orderbook = await self.exchange.get_orderbook(pair, depth=5)
+                if leg["side"] == "buy":
+                    # Check if ask side has enough liquidity
+                    available = sum(level.quantity for level in orderbook.asks[:3])
+                    needed = float(initial_balance) / ticker.ask / 3
+                else:
+                    # Check if bid side has enough liquidity
+                    available = sum(level.quantity for level in orderbook.bids[:3])
+                    needed = float(initial_balance) / ticker.bid / 3
+
+                if available < needed:
+                    logger.warning(
+                        f"SKIP: {pair} insufficient depth "
+                        f"(need {needed:.4f}, have {available:.4f})"
+                    )
+                    return None
+            except Exception as e:
+                logger.warning(f"SKIP: {pair} orderbook check failed: {e}")
+                return None
+
         try:
             for leg in legs:
                 leg_start = time.time()
@@ -225,6 +261,24 @@ class LiveExecutor:
                 except Exception as e:
                     logger.error(f"Order failed for {pair}: {e}")
                     status = "partial"
+
+                    # Revert completed legs (sell what we bought, buy what we sold)
+                    for completed in reversed(trade_legs):
+                        if completed.order_result:
+                            revert_side = "SELL" if completed.side == "BUY" else "BUY"
+                            try:
+                                await self.exchange.create_market_order(
+                                    symbol=completed.pair,
+                                    side=revert_side,
+                                    quantity=completed.quantity,
+                                )
+                                logger.info(
+                                    f"Reverted: {revert_side} "
+                                    f"{completed.quantity} {completed.pair}"
+                                )
+                            except Exception as re:
+                                logger.error(f"Revert failed for {completed.pair}: {re}")
+
                     trade_legs.append(
                         LiveTradeLeg(
                             pair=pair,
@@ -252,6 +306,16 @@ class LiveExecutor:
             for leg in trade_legs
             if leg.order_result
         )
+
+        # Clean up dust / remanentes
+        try:
+            await self.exchange.cleanup_dust()
+            # Recalculate balance after cleanup
+            final_balance = await self.exchange.get_balance("USDT")
+            profit = final_balance - initial_balance
+            profit_pct = float(profit / initial_balance * 100) if initial_balance > 0 else 0
+        except Exception as e:
+            logger.warning(f"Dust cleanup failed: {e}")
 
         # Update risk manager
         self.risk.record_trade(float(profit))
@@ -405,8 +469,8 @@ class LiveExecutor:
 
             quantity = available / price
 
-            # Round to reasonable precision (Binance lot sizes)
-            quantity = quantity.quantize(Decimal("0.00001"))
+            # Round DOWN to avoid exceeding balance
+            quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
 
             return quantity
 
@@ -417,9 +481,10 @@ class LiveExecutor:
                 base = leg.get("from_currency", "")
 
             balance = await self.exchange.get_balance(base)
-            # Reserve small amount for rounding
+            # Reserve small amount for fees
             quantity = balance * Decimal("0.99")
-            quantity = quantity.quantize(Decimal("0.00001"))
+            # Round DOWN to avoid exceeding balance
+            quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
 
             return quantity
 

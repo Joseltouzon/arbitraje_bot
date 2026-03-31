@@ -5,6 +5,7 @@ import { StatsCard } from './components/dashboard/StatsCard';
 import { OrderBook } from './components/dashboard/OrderBook';
 import { ActivityLog } from './components/dashboard/ActivityLog';
 import { VolatilityGauge } from './components/dashboard/VolatilityGauge';
+import { AccountSummary } from './components/dashboard/AccountSummary';
 import { ProfitChart } from './components/charts/ProfitChart';
 import { CycleCountChart } from './components/charts/CycleCountChart';
 import { CycleHistory } from './components/history/CycleHistory';
@@ -159,6 +160,7 @@ function App() {
               <ActivityLog logs={logs} />
             </div>
             <div className="w-96 space-y-4 overflow-y-auto">
+              <AccountSummary />
               <VolatilityGauge />
               <ProfitChart />
               <OrderBook />
