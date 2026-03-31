@@ -29,21 +29,17 @@ interface LiveTrade {
 interface LiveDashboardProps {
   stats: LiveStats | null;
   trades: LiveTrade[];
-  onEnable: () => void;
-  onConfirm: () => void;
-  onDisable: () => void;
   onPause: () => void;
   onResume: () => void;
+  onDisable: () => void;
 }
 
 export function LiveDashboard({
   stats,
   trades,
-  onEnable,
-  onConfirm,
-  onDisable,
   onPause,
   onResume,
+  onDisable,
 }: LiveDashboardProps) {
   if (!stats) return null;
 
@@ -52,64 +48,32 @@ export function LiveDashboard({
 
   return (
     <div className="space-y-4">
-      {/* Danger Warning */}
-      <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-red-400 text-lg">⚠️</span>
-          <h3 className="text-red-400 font-bold">Live Trading</h3>
-        </div>
-        <p className="text-red-300 text-sm">
-          This mode places REAL orders with REAL money on Binance. Use with
-          extreme caution. Start with small amounts.
-        </p>
-      </div>
-
       {/* Status & Controls */}
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-white font-semibold">Status</h3>
+          <h3 className="text-white font-semibold">Live Trading</h3>
           <div className="flex gap-2">
-            {!stats.enabled && (
+            {stats.risk.paused ? (
               <button
-                onClick={onEnable}
-                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm font-medium"
+                onClick={onResume}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
               >
-                Enable
+                Resume
+              </button>
+            ) : (
+              <button
+                onClick={onPause}
+                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm"
+              >
+                Pause
               </button>
             )}
-            {stats.enabled && !stats.confirmed && (
-              <button
-                onClick={onConfirm}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-bold animate-pulse"
-              >
-                CONFIRM LIVE TRADING
-              </button>
-            )}
-            {stats.enabled && stats.confirmed && (
-              <>
-                {stats.risk.paused ? (
-                  <button
-                    onClick={onResume}
-                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
-                  >
-                    Resume
-                  </button>
-                ) : (
-                  <button
-                    onClick={onPause}
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm"
-                  >
-                    Pause
-                  </button>
-                )}
-                <button
-                  onClick={onDisable}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
-                >
-                  Stop
-                </button>
-              </>
-            )}
+            <button
+              onClick={onDisable}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+            >
+              Stop
+            </button>
           </div>
         </div>
 
@@ -118,22 +82,10 @@ export function LiveDashboard({
             <p className="text-gray-500 text-xs">State</p>
             <p
               className={`font-medium ${
-                !stats.enabled
-                  ? 'text-gray-400'
-                  : !stats.confirmed
-                    ? 'text-yellow-400'
-                    : stats.risk.paused
-                      ? 'text-yellow-400'
-                      : 'text-green-400'
+                stats.risk.paused ? 'text-yellow-400' : 'text-green-400'
               }`}
             >
-              {!stats.enabled
-                ? 'Disabled'
-                : !stats.confirmed
-                  ? 'Awaiting Confirmation'
-                  : stats.risk.paused
-                    ? 'Paused'
-                    : 'Active'}
+              {stats.risk.paused ? 'Paused' : 'Active'}
             </p>
           </div>
           <div>

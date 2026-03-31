@@ -185,6 +185,10 @@ scanner.on_cycle_update(execute_live_trades)
 if settings.operation_mode == "paper":
     paper_trader.enable()
 
+if settings.auto_trade:
+    sf_executor.enable()
+    sf_executor.confirm()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

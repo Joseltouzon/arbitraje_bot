@@ -23,8 +23,6 @@ import {
   disablePaper,
   fetchLiveStatus,
   fetchLiveTrades,
-  enableLive,
-  confirmLive,
   disableLive,
   pauseLive,
   resumeLive,
@@ -182,11 +180,9 @@ function App() {
           <LiveDashboard
             stats={liveStats}
             trades={liveTrades}
-            onEnable={async () => { await enableLive(); setLiveStats(await fetchLiveStatus()); }}
-            onConfirm={async () => { await confirmLive(); setLiveStats(await fetchLiveStatus()); }}
-            onDisable={async () => { await disableLive(); setLiveStats(await fetchLiveStatus()); }}
             onPause={async () => { await pauseLive(); setLiveStats(await fetchLiveStatus()); }}
             onResume={async () => { await resumeLive(); setLiveStats(await fetchLiveStatus()); }}
+            onDisable={async () => { await disableLive(); setLiveStats(await fetchLiveStatus()); }}
           />
         </div>
       )}
