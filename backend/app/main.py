@@ -83,6 +83,14 @@ async def spot_futures_scanner_loop():
                     )
                     await cycle_logger.log_spot_futures(best)
 
+                    # Notify detection
+                    await telegram.send(
+                        f"📊 <b>Spot-Futures Detected</b>\n"
+                        f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
+                        f"Net: {best['net_profit_pct']:.3f}%\n"
+                        f"Dir: {best['direction']}"
+                    )
+
                     # Execute if enabled
                     logger.info(
                         f"SF opportunity: {best['symbol']} "
@@ -96,13 +104,20 @@ async def spot_futures_scanner_loop():
                         await ws_manager.broadcast(
                             {"type": "sf_trade", "data": result}
                         )
-                        spot_cost = best['spot_price'] * float(result.get('spot_quantity', 0))
+                        if best['direction'] == 'futures_premium':
+                            amount = best['spot_price'] * float(result.get('spot_quantity', 0))
+                        else:
+                            fut_price = best['futures_price']
+                            fut_qty = float(result.get('futures_quantity', 0))
+                            amount = fut_price * fut_qty
                         await telegram.send(
-                            f"🔄 <b>Spot-Futures Opened</b>\n"
+                            f"🔄 <b>Spot-Futures Executed</b>\n"
                             f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
                             f"Dir: {best['direction']}\n"
-                            f"Amount: ${spot_cost:.2f}"
+                            f"Amount: ${amount:.2f}"
                         )
+                    else:
+                        logger.info(f"SF executor returned None for {best['symbol']}")
 
                     # Check if we should close existing position
                     if (
