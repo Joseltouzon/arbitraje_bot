@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from app.config import settings
@@ -17,9 +17,8 @@ logger = get_logger(__name__)
 
 @dataclass
 class SpotFuturesPosition:
-    """An open spot-futures position."""
     symbol: str
-    direction: str  # "futures_premium" or "futures_discount"
+    direction: str
     spot_quantity: Decimal
     spot_price: float
     futures_quantity: Decimal
@@ -31,24 +30,7 @@ class SpotFuturesPosition:
 
 
 class SpotFuturesExecutor:
-    """
-    Executes spot-futures arbitrage.
-
-    Flow (futures_premium = buy spot + sell futures):
-    1. Transfer USDT spot → futures (for margin)
-    2. Buy asset in spot
-    3. Short asset in futures
-    4. Monitor for convergence
-    5. Sell asset in spot
-    6. Buy back futures (close short)
-    7. Transfer USDT futures → spot
-    """
-
-    def __init__(
-        self,
-        spot: BinanceAdapter,
-        futures: BinanceFuturesAdapter,
-    ) -> None:
+    def __init__(self, spot: BinanceAdapter, futures: BinanceFuturesAdapter) -> None:
         self.spot = spot
         self.futures = futures
         self._enabled = False
@@ -69,29 +51,25 @@ class SpotFuturesExecutor:
         if not settings.auto_trade:
             return {"status": "error", "message": "AUTO_TRADE=true required"}
         self._enabled = True
-        return {"status": "enabled", "message": "Spot-futures enabled. Call /confirm to finalize."}
+        return {"status": "enabled"}
 
     def confirm(self) -> dict[str, str]:
         if not self._enabled:
             return {"status": "error", "message": "Enable first"}
         self._confirmed = True
-        return {"status": "confirmed", "message": "Spot-futures trading active"}
+        return {"status": "confirmed"}
 
     def disable(self) -> dict[str, str]:
         self._enabled = False
         self._confirmed = False
-        return {"status": "disabled", "message": "Spot-futures stopped"}
+        self._position = None
+        return {"status": "disabled"}
 
     async def execute(self, opportunity: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Execute a spot-futures arbitrage opportunity.
-        Returns result dict or None if can't execute.
-        """
         if not self.enabled:
             return None
 
         if self.has_position:
-            logger.info("Already have a position, skipping")
             return None
 
         symbol = opportunity["symbol"]
@@ -101,20 +79,15 @@ class SpotFuturesExecutor:
         premium_pct = opportunity["premium_pct"]
         net_profit_pct = opportunity["net_profit_pct"]
 
-        # Only execute if net profit is positive
         if net_profit_pct <= 0:
             logger.info(f"SKIP {symbol}: net_profit={net_profit_pct:.4f}% <= 0")
             return None
 
-        self._trade_count += 1
-        start_time = time.time()
-
-        # Get available balances
         try:
             spot_usdt = await self.spot.get_balance("USDT")
             futures_usdt = await self.futures.get_futures_usdt_balance()
         except Exception as e:
-            logger.error(f"Failed to get balances: {e}")
+            logger.error(f"Balance check failed: {e}")
             return None
 
         if spot_usdt < Decimal("10"):
@@ -125,38 +98,29 @@ class SpotFuturesExecutor:
             logger.warning(f"SKIP {symbol}: futures too low {futures_usdt}")
             return None
 
-        # Use 90% of available spot USDT
         spot_spend = spot_usdt * Decimal("0.90")
-        asset = symbol.replace("USDT", "")
+        start_time = time.time()
 
-        logger.info(
-            f"Executing spot-futures #{self._trade_count}: "
-            f"{symbol} {direction} premium={premium_pct:.3f}%"
-        )
+        logger.info(f"Executing SF: {symbol} {direction} premium={premium_pct:.3f}%")
 
         try:
             if direction == "futures_premium":
-                # Buy spot + Sell futures
-                spot_qty = await self._buy_spot(symbol, asset, spot_spend)
+                spot_qty = await self._buy_spot(symbol, spot_spend)
                 if spot_qty <= Decimal("0"):
+                    logger.error(f"Spot buy returned 0 for {symbol}")
                     return None
 
                 futures_qty = await self._sell_futures(symbol, spot_qty)
                 if futures_qty <= Decimal("0"):
-                    # Rollback: sell spot
-                    await self._sell_spot(symbol, asset, spot_qty)
+                    logger.error("Futures sell failed, rolling back spot")
+                    await self._sell_spot(symbol, spot_qty)
                     return None
-
             else:
-                # futures_discount: Futures cheaper than spot
-                # Strategy: Buy futures (long) + hold until discount closes
                 futures_qty = await self._buy_futures(symbol, spot_spend)
                 if futures_qty <= Decimal("0"):
                     return None
+                spot_qty = Decimal("0")
 
-                spot_qty = Decimal("0")  # No spot position for discount
-
-            # Open position
             self._position = SpotFuturesPosition(
                 symbol=symbol,
                 direction=direction,
@@ -169,6 +133,7 @@ class SpotFuturesExecutor:
                 initial_futures_usdt=float(futures_usdt),
             )
 
+            self._trade_count += 1
             duration = (time.time() - start_time) * 1000
 
             result = {
@@ -177,41 +142,27 @@ class SpotFuturesExecutor:
                 "direction": direction,
                 "spot_quantity": float(spot_qty),
                 "futures_quantity": float(futures_qty),
-                "spot_price": spot_price,
-                "futures_price": futures_price,
-                "premium_pct": premium_pct,
                 "status": "opened",
                 "duration_ms": round(duration, 2),
-                "message": f"Position opened: {direction} {symbol}",
             }
 
-            logger.info(f"Position opened: {result}")
+            logger.info(f"Position opened: {symbol} {direction}")
             return result
 
         except Exception as e:
             logger.error(f"Execution failed: {e}")
             return None
 
-    async def close_position(
-        self, spot_tickers: dict[str, BidAsk]
-    ) -> dict[str, Any] | None:
-        """
-        Close an open position when premium has converged.
-        Sell spot + Buy back futures.
-        """
+    async def close_position(self, spot_tickers: dict[str, BidAsk]) -> dict[str, Any] | None:
         if not self._position:
             return None
 
         pos = self._position
-        pos.symbol.replace("USDT", "")
-
         logger.info(f"Closing position: {pos.symbol} {pos.direction}")
 
         try:
             if pos.direction == "futures_premium":
-                # Premium: had spot long + futures short
-                # Close: sell spot + buy back futures
-                sell_result = await self.spot.create_market_order(
+                await self.spot.create_market_order(
                     symbol=pos.symbol,
                     side="SELL",
                     quantity=pos.spot_quantity,
@@ -221,27 +172,26 @@ class SpotFuturesExecutor:
                     side="BUY",
                     quantity=pos.futures_quantity,
                 )
-                float(sell_result.get("cummulativeQuoteQty", 0))
             else:
-                # Discount: had futures long
-                # Close: sell futures
                 await self._close_futures_long(pos.symbol, pos.futures_quantity)
 
             # Transfer profit from futures to spot
             futures_bal = await self.futures.get_futures_usdt_balance()
             if futures_bal > Decimal("1"):
-                await self.futures.transfer_futures_to_spot(
-                    "USDT", futures_bal * Decimal("0.99")
-                )
+                try:
+                    await self.futures.transfer_futures_to_spot(
+                        "USDT", futures_bal * Decimal("0.99")
+                    )
+                except Exception as e:
+                    logger.warning(f"Transfer failed (need permission): {e}")
 
             # Calculate P&L
             final_spot = float(await self.spot.get_balance("USDT"))
+            final_futures = float(await self.futures.get_futures_usdt_balance())
             initial_total = pos.initial_spot_usdt + pos.initial_futures_usdt
-            final_total = final_spot + float(futures_bal)
+            final_total = final_spot + final_futures
             pnl_usdt = final_total - initial_total
             pnl_pct = (pnl_usdt / initial_total * 100) if initial_total > 0 else 0
-
-            self._trade_count += 1
 
             result = {
                 "trade_id": self._trade_count,
@@ -252,21 +202,18 @@ class SpotFuturesExecutor:
                 "pnl_pct": round(pnl_pct, 4),
                 "initial_balance": round(initial_total, 2),
                 "final_balance": round(final_total, 2),
-                "message": f"Position closed: {pos.symbol}",
             }
 
             self._trades.append(result)
             self._position = None
-
-            logger.info(f"Position closed: {result}")
+            logger.info(f"Position closed: P&L={pnl_usdt:.4f}")
             return result
 
         except Exception as e:
-            logger.error(f"Failed to close position: {e}")
+            logger.error(f"Close failed: {e}")
             return None
 
     async def should_close(self, spot_tickers: dict[str, BidAsk]) -> bool:
-        """Check if position should be closed (premium converged)."""
         if not self._position:
             return False
 
@@ -286,83 +233,51 @@ class SpotFuturesExecutor:
 
         current_premium = (futures_price - spot_mid) / spot_mid * 100
 
-        # Close when premium drops below 0.05% (converged)
         if pos.direction == "futures_premium" and current_premium < 0.05:
             return True
 
-        # Close when discount converges (premium rises above -0.05%)
         return bool(pos.direction == "futures_discount" and current_premium > -0.05)
 
-    async def _buy_spot(self, symbol: str, asset: str, amount: Decimal) -> Decimal:
-        """Buy asset in spot."""
+    async def _buy_spot(self, symbol: str, amount: Decimal) -> Decimal:
         ticker = await self.spot.get_ticker(symbol)
-        qty = (amount * Decimal("0.99")) / Decimal(str(ticker.ask))
-        qty = qty.quantize(Decimal("0.00001"))
-        await self.spot.create_market_order(
-            symbol=symbol,
-            side="BUY",
-            quantity=qty,
+        qty = (amount * Decimal("0.99") / Decimal(str(ticker.ask))).quantize(
+            Decimal("0.00001"), rounding=ROUND_DOWN
         )
-        # Use quoteOrderQty approach via the adapter
-        # For now, calculate quantity from amount and price
-        ticker = await self.spot.get_ticker(symbol)
-        qty = (amount * Decimal("0.99")) / Decimal(str(ticker.ask))
-        qty = qty.quantize(Decimal("0.00001"))
+        result = await self.spot.create_market_order(symbol, "BUY", qty)
+        actual = Decimal(str(result.quantity))
+        logger.info(f"Spot BUY: {actual} {symbol}")
+        return actual
 
-        await self.spot.create_market_order(
-            symbol=symbol,
-            side="BUY",
-            quantity=qty,
-        )
-        logger.info(f"Bought {qty} {asset} in spot")
-        return qty
-
-    async def _sell_spot(self, symbol: str, asset: str, quantity: Decimal) -> dict:
-        """Sell asset in spot."""
-        result = await self.spot.create_market_order(
-            symbol=symbol,
-            side="SELL",
-            quantity=quantity,
-        )
-        logger.info(f"Sold {quantity} {asset} in spot")
-        return result
+    async def _sell_spot(self, symbol: str, quantity: Decimal) -> None:
+        qty = quantity.quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
+        await self.spot.create_market_order(symbol, "SELL", qty)
+        logger.info(f"Spot SELL: {qty} {symbol}")
 
     async def _sell_futures(self, symbol: str, quantity: Decimal) -> Decimal:
-        """Short asset in futures."""
-        qty = quantity.quantize(Decimal("0.001"))
-        await self.futures.create_futures_market_order(
-            symbol=symbol,
-            side="SELL",
-            quantity=qty,
-        )
-        logger.info(f"Shorted {qty} {symbol} in futures")
+        qty = quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+        if qty <= 0:
+            return Decimal("0")
+        await self.futures.create_futures_market_order(symbol, "SELL", qty)
+        logger.info(f"Futures SELL: {qty} {symbol}")
         return qty
 
     async def _buy_futures(self, symbol: str, amount_usdt: Decimal) -> Decimal:
-        """Buy asset in futures (long)."""
         price = await self.futures.get_futures_price(symbol)
         if price <= 0:
             return Decimal("0")
-        qty = (amount_usdt * Decimal("0.99")) / Decimal(str(price))
-        qty = qty.quantize(Decimal("0.001"))
-        await self.futures.create_futures_market_order(
-            symbol=symbol,
-            side="BUY",
-            quantity=qty,
+        qty = (amount_usdt * Decimal("0.99") / Decimal(str(price))).quantize(
+            Decimal("0.001"), rounding=ROUND_DOWN
         )
-        logger.info(f"Bought {qty} {symbol} futures (long)")
+        if qty <= 0:
+            return Decimal("0")
+        await self.futures.create_futures_market_order(symbol, "BUY", qty)
+        logger.info(f"Futures BUY: {qty} {symbol}")
         return qty
 
-    async def _close_futures_long(self, symbol: str, quantity: Decimal) -> dict:
-        """Close a futures long position (sell)."""
-        qty = quantity.quantize(Decimal("0.001"))
-        result = await self.futures.create_futures_market_order(
-            symbol=symbol,
-            side="SELL",
-            quantity=qty,
-        )
-        logger.info(f"Closed futures long: sold {qty} {symbol}")
-        return result
+    async def _close_futures_long(self, symbol: str, quantity: Decimal) -> None:
+        qty = quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+        await self.futures.create_futures_market_order(symbol, "SELL", qty)
+        logger.info(f"Futures close: SELL {qty} {symbol}")
 
     def get_stats(self) -> dict[str, Any]:
         return {

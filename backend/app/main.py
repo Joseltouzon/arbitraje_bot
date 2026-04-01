@@ -140,7 +140,7 @@ async def spot_futures_scanner_loop():
                             )
         except Exception as e:
             logger.error(f"Spot-futures scan error: {e}")
-        await asyncio.sleep(10)
+        await asyncio.sleep(3)
 
 
 async def broadcast_cycles(cycles_data: list[dict]) -> None:
