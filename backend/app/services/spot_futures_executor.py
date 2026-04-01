@@ -99,6 +99,7 @@ class SpotFuturesExecutor:
             return None
 
         spot_spend = spot_usdt * Decimal("0.90")
+        futures_spend = futures_usdt * Decimal("0.90")
         start_time = time.time()
 
         logger.info(f"Executing SF: {symbol} {direction} premium={premium_pct:.3f}%")
@@ -116,8 +117,9 @@ class SpotFuturesExecutor:
                     await self._sell_spot(symbol, spot_qty)
                     return None
             else:
-                futures_qty = await self._buy_futures(symbol, spot_spend)
+                futures_qty = await self._buy_futures(symbol, futures_spend)
                 if futures_qty <= Decimal("0"):
+                    logger.error(f"Futures buy returned 0 for {symbol}")
                     return None
                 spot_qty = Decimal("0")
 
