@@ -72,13 +72,13 @@ async def telegram_command_loop():
 
 
 async def spot_futures_scanner_loop():
-    """Background loop for spot-futures arbitrage scanning and execution."""
+    """Background loop for funding rate carry scanning and execution."""
     while True:
         try:
             if aggregator.tickers:
                 opportunities = await spot_futures.scan(aggregator.tickers)
                 if not opportunities:
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(30)
                     continue
 
                 # Log all opportunities to DB for analytics
@@ -86,35 +86,32 @@ async def spot_futures_scanner_loop():
                     with contextlib.suppress(Exception):
                         await cycle_logger.log_spot_futures(opp)
 
-                # Pick the single best opportunity
-                best = max(opportunities, key=lambda o: o["net_profit_pct"])
+                # Pick the single best (highest absolute funding rate)
+                best = max(opportunities, key=lambda o: abs(o["funding_rate"]))
 
-                # Broadcast all opportunities to UI via WebSocket
+                # Broadcast best to UI via WebSocket
                 await ws_manager.broadcast({"type": "spot_futures", "data": best})
 
                 logger.info(
-                    f"SF scan: {len(opportunities)} opportunities | "
-                    f"best: {best['symbol']} {best['premium_pct']:.4f}% "
-                    f"net={best['net_profit_pct']:.4f} dir={best['direction']}"
+                    f"Funding scan: {len(opportunities)} opportunities | "
+                    f"best: {best['symbol']} "
+                    f"rate={best['funding_rate']:.6f} "
+                    f"(~{best['monthly_return_pct']:.2f}%/mo) "
+                    f"dir={best['direction']}"
                 )
 
                 # Attempt execution of the best one
                 result = await sf_executor.execute(best)
                 if result:
-                    logger.info(f"SF EXECUTED: {result}")
+                    logger.info(f"Funding EXECUTED: {result}")
                     await ws_manager.broadcast({"type": "sf_trade", "data": result})
 
-                    # Telegram: only notify on actual execution
-                    if best["direction"] == "futures_premium":
-                        amount = best["spot_price"] * float(result.get("spot_quantity", 0))
-                    else:
-                        amount = best["futures_price"] * float(result.get("futures_quantity", 0))
                     await telegram.send(
-                        f"🔄 <b>Spot-Futures Executed</b>\n"
-                        f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
-                        f"Dir: {best['direction']}\n"
-                        f"Net: {best['net_profit_pct']:.3f}%\n"
-                        f"Amount: ${amount:.2f}"
+                        f"🔄 <b>Funding Carry Opened</b>\n"
+                        f"{best['symbol']}\n"
+                        f"Rate: {best['funding_rate'] * 100:.4f}% per 8h\n"
+                        f"~{best['monthly_return_pct']:.2f}%/month\n"
+                        f"Dir: {best['direction']}"
                     )
 
                 # Check if we should close existing position
@@ -124,16 +121,19 @@ async def spot_futures_scanner_loop():
                         await ws_manager.broadcast({"type": "sf_trade", "data": close_r})
                         pnl = close_r.get("pnl_usdt", 0)
                         emoji = "✅" if pnl >= 0 else "❌"
+                        settlements = close_r.get("settlements_count", 0)
+                        held = close_r.get("held_hours", 0)
                         await telegram.send(
-                            f"{emoji} <b>Spot-Futures Closed</b>\n"
+                            f"{emoji} <b>Funding Carry Closed</b>\n"
                             f"{close_r['symbol']}\n"
                             f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.4f}</b> "
                             f"({close_r.get('pnl_pct', 0):.3f}%)\n"
+                            f"Held: {held:.1f}h | Settlements: {settlements}\n"
                             f"Balance: ${close_r.get('final_balance', 0):.2f}"
                         )
         except Exception as e:
-            logger.error(f"Spot-futures scan error: {e}")
-        await asyncio.sleep(3)
+            logger.error(f"Funding scan error: {e}")
+        await asyncio.sleep(30)  # Funding rate changes slowly, no need for 3s
 
 
 async def broadcast_cycles(cycles_data: list[dict]) -> None:

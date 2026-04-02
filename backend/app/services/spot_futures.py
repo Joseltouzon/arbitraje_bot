@@ -9,18 +9,20 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Key symbols for spot-futures arbitrage
-FUTURES_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+# Symbols eligible for funding rate carry
+FUNDING_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
 
 
 class SpotFuturesDetector:
     """
-    Detects spot-futures arbitrage opportunities.
+    Scans for funding rate carry opportunities.
 
-    Strategy: Cash and Carry
-    - When futures price > spot price (premium): buy spot + sell futures
-    - When futures price < spot price (discount): sell spot + buy futures
-    - Profit = |premium/discount| - fees (0.1% spot + 0.02% futures)
+    Strategy: Cash-and-Carry (funding rate harvesting)
+    - When funding_rate > 0: longs pay shorts → buy spot + short futures → collect funding
+    - When funding_rate < 0: shorts pay longs → sell spot + long futures → collect funding
+    - Funding settles every 8h (00:00, 08:00, 16:00 UTC)
+    - Entry: |funding_rate| >= min_threshold
+    - Exit: |funding_rate| drops below exit_threshold or flips sign
     """
 
     def __init__(self, futures_adapter: BinanceFuturesAdapter) -> None:
@@ -31,76 +33,76 @@ class SpotFuturesDetector:
     async def scan(
         self,
         spot_tickers: dict[str, BidAsk],
-        min_premium_pct: float = 0.15,
+        min_funding_rate: float = 0.005,  # 0.005% per 8h = ~0.55% monthly
     ) -> list[dict[str, Any]]:
         """
-        Scan for spot-futures arbitrage opportunities.
+        Scan for funding rate carry opportunities.
 
         Args:
-            spot_tickers: current spot prices from aggregator
-            min_premium_pct: minimum premium to consider (default 0.15%)
+            spot_tickers: current spot prices
+            min_funding_rate: minimum |funding_rate| to enter (default 0.005%)
         """
-        opportunities = []
-
         try:
-            futures_prices = await self.futures.get_all_futures_prices()
+            funding_data = await self.futures.get_all_funding_rates()
         except Exception as e:
-            logger.error(f"Failed to fetch futures prices: {e}")
+            logger.error(f"Failed to fetch funding rates: {e}")
             return []
 
-        for symbol in FUTURES_SYMBOLS:
-            if symbol not in spot_tickers or symbol not in futures_prices:
+        # Index by symbol
+        funding_by_symbol = {d["symbol"]: d for d in funding_data}
+
+        opportunities = []
+
+        for symbol in FUNDING_SYMBOLS:
+            if symbol not in funding_by_symbol:
                 continue
 
-            spot_bid = spot_tickers[symbol].bid
-            spot_ask = spot_tickers[symbol].ask
-            spot_mid = (spot_bid + spot_ask) / 2
-            futures_price = futures_prices[symbol]
+            fr_data = funding_by_symbol[symbol]
+            funding_rate = fr_data["funding_rate"]
+            abs_rate = abs(funding_rate)
 
-            if spot_mid <= 0:
+            if abs_rate < min_funding_rate:
                 continue
 
-            # Calculate premium
-            premium_pct = (futures_price - spot_mid) / spot_mid * 100
+            # Need spot price for the UI
+            spot_price = 0.0
+            if symbol in spot_tickers:
+                spot_mid = (spot_tickers[symbol].bid + spot_tickers[symbol].ask) / 2
+                spot_price = round(spot_mid, 2)
 
-            # Total fees: 0.1% spot + 0.02% futures = 0.12%
-            total_fees_pct = 0.12
-            net_profit_pct = abs(premium_pct) - total_fees_pct
+            # Calculate projected returns
+            # Funding rate * 3 settlements/day * 30 days = monthly %
+            daily_rate = abs_rate * 3  # 3 settlements per day
+            monthly_rate = daily_rate * 30
+            annual_rate = daily_rate * 365
 
-            if net_profit_pct < min_premium_pct:
-                continue
-
-            # Get funding rate
-            try:
-                funding = await self.futures.get_funding_rate(symbol)
-                funding_rate = funding.get("funding_rate", 0)
-            except Exception:
-                funding_rate = 0
+            direction = "funding_positive" if funding_rate > 0 else "funding_negative"
 
             opportunity = {
                 "symbol": symbol,
-                "spot_price": round(spot_mid, 2),
-                "futures_price": round(futures_price, 2),
-                "premium_pct": round(premium_pct, 4),
-                "net_profit_pct": round(net_profit_pct, 4),
-                "direction": "futures_premium" if premium_pct > 0 else "futures_discount",
-                "strategy": (
-                    "buy_spot_sell_futures" if premium_pct > 0 else "sell_spot_buy_futures"
-                ),
-                "funding_rate": funding_rate,
-                "funding_profit_8h": round(funding_rate * 100, 4),
+                "funding_rate": round(funding_rate, 6),
+                "funding_rate_pct": round(funding_rate * 100, 4),
+                "abs_rate_pct": round(abs_rate * 100, 4),
+                "daily_return_pct": round(daily_rate * 100, 4),
+                "monthly_return_pct": round(monthly_rate * 100, 2),
+                "annual_return_pct": round(annual_rate * 100, 1),
+                "net_profit_pct": round(daily_rate * 100, 4),  # used by executor for ranking
+                "direction": direction,
+                "spot_price": spot_price,
+                "next_funding_time": fr_data.get("next_funding_time", 0),
                 "timestamp": datetime.now().isoformat(),
             }
 
             opportunities.append(opportunity)
 
             logger.info(
-                f"Spot-Futures: {symbol} premium={premium_pct:.3f}% "
-                f"net={net_profit_pct:.3f}% funding={funding_rate:.6f}"
+                f"Funding opportunity: {symbol} rate={funding_rate:.6f} "
+                f"({abs_rate * 100:.4f}%/8h, ~{monthly_rate * 100:.2f}%/mo) "
+                f"dir={direction}"
             )
 
-        # Sort by profit descending
-        opportunities.sort(key=lambda o: o["net_profit_pct"], reverse=True)
+        # Sort by absolute funding rate descending
+        opportunities.sort(key=lambda o: abs(o["funding_rate"]), reverse=True)
         self._opportunities = opportunities
         self._last_scan = datetime.now()
 

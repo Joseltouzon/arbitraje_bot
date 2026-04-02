@@ -23,6 +23,7 @@
 | 17 | Spot-Futures executor fix: discount abre ambas patas (sell spot + buy futures) | Alto | — |
 | 18 | Spot-Futures: selección automática de mejor oportunidad + notificación solo al ejecutar | Alto | — |
 | 19 | Spot-Futures: step sizes por símbolo para spot y futures | Medio | — |
+| 20 | Funding rate carry strategy reemplaza premium/discount | Alto | — |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 
@@ -42,26 +43,32 @@
 - **Fallback**: REST polling cada 1s si WS falla
 - **Cache**: Redis persiste tickers para recovery post-crash
 
-### Spot-Futures: flujo de ejecución
+### Spot-Futures: flujo de ejecución (funding rate carry)
 ```
-Scanner (cada 3s)
-  └→ Detecta N oportunidades (BTC, ETH, SOL, BNB...)
-  └→ Ordena por net_profit_pct DESC
-  └→ Elige la MEJOR (mayor ganancia esperada)
+Scanner (cada 30s)
+  └→ Obtiene funding rates de todos los símbolos (premiumIndex endpoint)
+  └→ Filtra por |rate| >= 0.005% (umbral de entrada)
+  └→ Ordena por |rate| DESC
+  └→ Elige el MEJOR (mayor funding rate absoluto)
   └→ Intenta ejecutar con sf_executor
        ├→ OK → notifica Telegram + broadcast WebSocket
        └→ Skip → solo log (sin notificación)
   └→ Si hay posición abierta, verifica should_close()
-       └→ Close → notifica P&L por Telegram
+       └→ Close cuando rate baja de 0.002% o cambia de signo
 ```
 
-**Estrategias soportadas:**
-- **futures_premium**: buy spot + sell futures → cierra con sell spot + buy futures
-- **futures_discount**: sell spot + buy futures → cierra con buy spot + sell futures
+**Estrategia:**
+- **funding_positive** (rate > 0): buy spot + short futures → cobrás funding de longs cada 8h
+- **funding_negative** (rate < 0): sell spot + long futures → cobrás funding de shorts cada 8h
+- **Salida**: cuando |rate| baja de 0.002% o cambia de signo
+- **Retorno estimado**: 0.5-3% mensual dependiendo del rate promedio
 
-**Notificaciones Telegram:**
-- Solo se envían cuando el executor efectivamente abre o cierra una posición
-- No se notifican detecciones que no se ejecutan
+**Returns por funding rate:**
+| Rate por 8h | Diario | Mensual | Anual |
+|-------------|--------|---------|-------|
+| 0.005% | 0.015% | 0.45% | 5.5% |
+| 0.010% | 0.030% | 0.90% | 11.0% |
+| 0.030% | 0.090% | 2.70% | 32.9% |
 
 ### Endpoints clave
 - `GET /api/cycles/` — ciclos triangulares actuales

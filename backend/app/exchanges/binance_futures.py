@@ -69,6 +69,26 @@ class BinanceFuturesAdapter:
             }
         return {"symbol": symbol, "funding_rate": 0.0, "funding_time": 0}
 
+    async def get_all_funding_rates(self) -> list[dict[str, Any]]:
+        """GET /fapi/v1/premiumIndex - current funding rate for all symbols."""
+        resp = await self.client.get("/fapi/v1/premiumIndex")
+        resp.raise_for_status()
+        result = []
+        for item in resp.json():
+            try:
+                result.append(
+                    {
+                        "symbol": item["symbol"],
+                        "mark_price": float(item.get("markPrice", 0)),
+                        "index_price": float(item.get("indexPrice", 0)),
+                        "funding_rate": float(item.get("lastFundingRate", 0)),
+                        "next_funding_time": item.get("nextFundingTime", 0),
+                    }
+                )
+            except (KeyError, ValueError, TypeError):
+                continue
+        return result
+
     async def get_futures_balance(self) -> dict[str, Decimal]:
         """GET /fapi/v2/balance - get futures account balance."""
         params = self._sign({})
