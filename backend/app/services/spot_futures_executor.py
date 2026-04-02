@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -79,8 +80,8 @@ class SpotFuturesExecutor:
         premium_pct = opportunity["premium_pct"]
         net_profit_pct = opportunity["net_profit_pct"]
 
-        if net_profit_pct <= 0:
-            logger.info(f"SKIP {symbol}: net_profit={net_profit_pct:.4f}% <= 0")
+        if net_profit_pct <= 0.15:
+            logger.info(f"SKIP {symbol}: net_profit={net_profit_pct:.4f}% < 0.15%")
             return None
 
         try:
@@ -149,6 +150,11 @@ class SpotFuturesExecutor:
             }
 
             logger.info(f"Position opened: {symbol} {direction}")
+
+            # Log opening to database
+            with contextlib.suppress(Exception):
+                await self._log_trade({**result, "pnl_usdt": 0, "pnl_pct": 0})
+
             return result
 
         except Exception as e:
@@ -208,6 +214,15 @@ class SpotFuturesExecutor:
 
             self._trades.append(result)
             self._position = None
+
+            # Clean up any dust in spot
+            with contextlib.suppress(Exception):
+                await self.spot.cleanup_dust()
+
+            # Log trade to database
+            with contextlib.suppress(Exception):
+                await self._log_trade(result)
+
             logger.info(f"Position closed: P&L={pnl_usdt:.4f}")
             return result
 
@@ -280,6 +295,27 @@ class SpotFuturesExecutor:
         qty = quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
         await self.futures.create_futures_market_order(symbol, "SELL", qty)
         logger.info(f"Futures close: SELL {qty} {symbol}")
+
+    async def _log_trade(self, trade: dict[str, Any]) -> None:
+        """Log trade to database for history."""
+        from app.db.models import TradeHistory
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            record = TradeHistory(
+                mode="spot_futures",
+                currencies=trade.get("symbol", ""),
+                pairs=trade.get("symbol", ""),
+                sides=trade.get("direction", ""),
+                initial_amount=trade.get("initial_balance", 0),
+                final_amount=trade.get("final_balance", 0),
+                profit_usdt=trade.get("pnl_usdt", 0),
+                profit_pct=trade.get("pnl_pct", 0),
+                total_fees=0,
+                status=trade.get("status", "unknown"),
+            )
+            session.add(record)
+            await session.commit()
 
     def get_stats(self) -> dict[str, Any]:
         return {

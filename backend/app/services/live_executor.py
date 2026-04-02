@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -341,6 +342,10 @@ class LiveExecutor:
         self.total_profit += profit
         self.total_fees += total_fees
 
+        # Log to database
+        with contextlib.suppress(Exception):
+            await self._log_trade(trade, status)
+
         log_status = "PROFIT" if profit > 0 else "LOSS"
         logger.info(
             f"Live trade #{self.trade_count}: {log_status} "
@@ -487,6 +492,27 @@ class LiveExecutor:
             quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
 
             return quantity
+
+    async def _log_trade(self, trade, status: str) -> None:
+        """Log trade to database."""
+        from app.db.models import TradeHistory
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            record = TradeHistory(
+                mode="triangular",
+                currencies=",".join(trade.currencies),
+                pairs=",".join(trade.pairs),
+                sides=",".join(trade.sides),
+                initial_amount=float(trade.initial_balance),
+                final_amount=float(trade.final_balance),
+                profit_usdt=float(trade.profit_usdt),
+                profit_pct=trade.profit_pct,
+                total_fees=float(trade.total_fees),
+                status=status,
+            )
+            session.add(record)
+            await session.commit()
 
     def get_stats(self) -> dict[str, Any]:
         """Get live trading statistics."""
