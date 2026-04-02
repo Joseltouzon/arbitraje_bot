@@ -85,8 +85,7 @@ class SpotFuturesDetector:
                 "net_profit_pct": round(net_profit_pct, 4),
                 "direction": "futures_premium" if premium_pct > 0 else "futures_discount",
                 "strategy": (
-                    "buy_spot_sell_futures" if premium_pct > 0
-                    else "sell_spot_buy_futures"
+                    "buy_spot_sell_futures" if premium_pct > 0 else "sell_spot_buy_futures"
                 ),
                 "funding_rate": funding_rate,
                 "funding_profit_8h": round(funding_rate * 100, 4),
@@ -110,8 +109,6 @@ class SpotFuturesDetector:
     def get_stats(self) -> dict[str, Any]:
         return {
             "opportunities": len(self._opportunities),
-            "last_scan": (
-                self._last_scan.isoformat() if self._last_scan else None
-            ),
+            "last_scan": (self._last_scan.isoformat() if self._last_scan else None),
             "top_opportunity": self._opportunities[0] if self._opportunities else None,
         }

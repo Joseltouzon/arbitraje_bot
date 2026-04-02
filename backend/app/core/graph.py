@@ -10,9 +10,25 @@ logger = get_logger(__name__)
 
 # Known quote currencies on Binance (order by length for correct parsing)
 QUOTE_CURRENCIES = {
-    "USDT", "USDC", "BUSD", "TUSD", "DAI", "FDUSD",
-    "BTC", "ETH", "BNB", "SOL", "DOGE", "XRP", "ADA",
-    "AVAX", "DOT", "MATIC", "LINK", "UNI", "SHIB",
+    "USDT",
+    "USDC",
+    "BUSD",
+    "TUSD",
+    "DAI",
+    "FDUSD",
+    "BTC",
+    "ETH",
+    "BNB",
+    "SOL",
+    "DOGE",
+    "XRP",
+    "ADA",
+    "AVAX",
+    "DOT",
+    "MATIC",
+    "LINK",
+    "UNI",
+    "SHIB",
 }
 
 
@@ -76,9 +92,11 @@ def build_currency_graph(
         if buy_rate > 0:
             graph[quote][base] = buy_rate
             metadata[quote][base] = {
-                "pair": symbol, "side": "buy",
+                "pair": symbol,
+                "side": "buy",
                 "rate": buy_rate,
-                "bid": bidask.bid, "ask": bidask.ask,
+                "bid": bidask.bid,
+                "ask": bidask.ask,
             }
 
         # Sell: base → quote (you receive bid price)
@@ -86,9 +104,11 @@ def build_currency_graph(
         if sell_rate > 0:
             graph[base][quote] = sell_rate
             metadata[base][quote] = {
-                "pair": symbol, "side": "sell",
+                "pair": symbol,
+                "side": "sell",
                 "rate": sell_rate,
-                "bid": bidask.bid, "ask": bidask.ask,
+                "bid": bidask.bid,
+                "ask": bidask.ask,
             }
 
     logger.info(
@@ -99,9 +119,7 @@ def build_currency_graph(
     return graph, metadata
 
 
-def _parse_pair(
-    symbol: str, quote_currencies: set[str]
-) -> tuple[str | None, str | None]:
+def _parse_pair(symbol: str, quote_currencies: set[str]) -> tuple[str | None, str | None]:
     """Parse Binance symbol like BTCUSDT into (BTC, USDT)."""
     for quote in sorted(quote_currencies, key=len, reverse=True):
         if symbol.endswith(quote):

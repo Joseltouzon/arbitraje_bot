@@ -46,11 +46,7 @@ class VolatilityMonitor:
 
             bidask = tickers[symbol]
             mid_price = (bidask.bid + bidask.ask) / 2
-            spread_pct = (
-                (bidask.ask - bidask.bid) / bidask.bid * 100
-                if bidask.bid > 0
-                else 0
-            )
+            spread_pct = (bidask.ask - bidask.bid) / bidask.bid * 100 if bidask.bid > 0 else 0
 
             self._price_history[symbol].append((now, mid_price))
             self._spread_history[symbol].append((now, spread_pct))
@@ -121,9 +117,7 @@ class VolatilityMonitor:
             indicators[symbol] = {
                 "price_change_pct": round(change_pct, 4),
                 "current_spread_pct": round(spreads[-1][1], 4) if spreads else 0,
-                "avg_spread_pct": round(
-                    sum(s[1] for s in spreads) / len(spreads), 4
-                )
+                "avg_spread_pct": round(sum(s[1] for s in spreads) / len(spreads), 4)
                 if spreads
                 else 0,
             }
@@ -135,8 +129,6 @@ class VolatilityMonitor:
             "volatility_score": round(self._volatility_score, 2),
             "is_volatile": self.is_volatile,
             "update_count": self._update_count,
-            "last_update": (
-                self._last_update.isoformat() if self._last_update else None
-            ),
+            "last_update": (self._last_update.isoformat() if self._last_update else None),
             "indicators": self.get_indicators(),
         }

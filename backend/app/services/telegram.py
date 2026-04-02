@@ -178,9 +178,7 @@ class TelegramNotifier:
                 return "No triangular cycles detected."
             lines = []
             for c in cycles[:5]:
-                lines.append(
-                    f"{'→'.join(c['currencies'])} +{c['net_profit_pct']:.3f}%"
-                )
+                lines.append(f"{'→'.join(c['currencies'])} +{c['net_profit_pct']:.3f}%")
             return "🔄 <b>Cycles</b>\n" + "\n".join(lines)
 
         elif cmd == "/futures":
@@ -191,8 +189,7 @@ class TelegramNotifier:
             lines = []
             for o in opps[:5]:
                 lines.append(
-                    f"{o['symbol']}: {o['premium_pct']:.3f}% "
-                    f"net={o['net_profit_pct']:.3f}%"
+                    f"{o['symbol']}: {o['premium_pct']:.3f}% net={o['net_profit_pct']:.3f}%"
                 )
             return "📈 <b>Spot-Futures</b>\n" + "\n".join(lines)
 
@@ -201,14 +198,8 @@ class TelegramNotifier:
             futures = deps.get("futures_exchange")
             try:
                 spot_usdt = await spot.get_balance("USDT") if spot else 0
-                futures_usdt = (
-                    await futures.get_futures_usdt_balance() if futures else 0
-                )
-                return (
-                    f"💰 <b>Balance</b>\n"
-                    f"Spot: {spot_usdt} USDT\n"
-                    f"Futures: {futures_usdt} USDT"
-                )
+                futures_usdt = await futures.get_futures_usdt_balance() if futures else 0
+                return f"💰 <b>Balance</b>\nSpot: {spot_usdt} USDT\nFutures: {futures_usdt} USDT"
             except Exception as e:
                 return f"Error getting balance: {e}"
 
@@ -232,8 +223,10 @@ class TelegramNotifier:
                 return "Live trading not configured."
             s = live.get_stats()
             status = (
-                "ACTIVE" if s['enabled'] and s['confirmed']
-                else "ENABLED" if s['enabled']
+                "ACTIVE"
+                if s["enabled"] and s["confirmed"]
+                else "ENABLED"
+                if s["enabled"]
                 else "OFF"
             )
             return (

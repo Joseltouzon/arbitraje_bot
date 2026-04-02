@@ -18,9 +18,7 @@ async def get_all_tickers(agg: PriceAggregator = Depends(get_aggregator)):
             result[symbol] = {
                 "bid": bidask.bid,
                 "ask": bidask.ask,
-                "spread_pct": round(
-                    (bidask.ask - bidask.bid) / bidask.bid * 100, 4
-                ),
+                "spread_pct": round((bidask.ask - bidask.bid) / bidask.bid * 100, 4),
             }
     return {
         "tickers": result,

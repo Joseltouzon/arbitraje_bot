@@ -25,14 +25,10 @@ class CycleLogger:
                     sides=",".join(leg["side"] for leg in cycle["legs"]),
                     net_profit_pct=cycle["net_profit_pct"],
                     net_profit_usdt=cycle.get("calculated", {}).get("net_profit", 0),
-                    initial_amount=cycle.get("calculated", {}).get(
-                        "initial_amount", 0
-                    ),
+                    initial_amount=cycle.get("calculated", {}).get("initial_amount", 0),
                     final_amount=cycle.get("calculated", {}).get("final_amount", 0),
                     total_fees=cycle.get("calculated", {}).get("total_fees", 0),
-                    total_slippage=cycle.get("calculated", {}).get(
-                        "total_slippage", 0
-                    ),
+                    total_slippage=cycle.get("calculated", {}).get("total_slippage", 0),
                     raw_rate_product=cycle.get("raw_rate_product", 0),
                     legs_json=json.dumps(cycle["legs"]),
                 )
@@ -79,11 +75,7 @@ class CycleLogger:
             async with async_session_factory() as session:
                 from sqlalchemy import desc, select
 
-                stmt = (
-                    select(CycleSnapshot)
-                    .order_by(desc(CycleSnapshot.detected_at))
-                    .limit(limit)
-                )
+                stmt = select(CycleSnapshot).order_by(desc(CycleSnapshot.detected_at)).limit(limit)
                 result = await session.execute(stmt)
                 rows = result.scalars().all()
                 return [
@@ -107,11 +99,7 @@ class CycleLogger:
             async with async_session_factory() as session:
                 from sqlalchemy import desc, select
 
-                stmt = (
-                    select(TradeHistory)
-                    .order_by(desc(TradeHistory.executed_at))
-                    .limit(limit)
-                )
+                stmt = select(TradeHistory).order_by(desc(TradeHistory.executed_at)).limit(limit)
                 result = await session.execute(stmt)
                 rows = result.scalars().all()
                 return [

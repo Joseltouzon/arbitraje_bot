@@ -27,9 +27,7 @@ class CycleSnapshot(Base):
     total_slippage: Mapped[float] = mapped_column(Float)
     raw_rate_product: Mapped[float] = mapped_column(Float)
     legs_json: Mapped[str] = mapped_column(Text)  # Full leg details as JSON
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class TradeHistory(Base):
@@ -49,9 +47,7 @@ class TradeHistory(Base):
     profit_pct: Mapped[float] = mapped_column(Float)
     total_fees: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(20))  # "completed", "failed"
-    executed_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    executed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class DailyStats(Base):
@@ -85,6 +81,4 @@ class SpotFuturesHistory(Base):
     net_profit_pct: Mapped[float] = mapped_column(Float)
     direction: Mapped[str] = mapped_column(String(30))
     funding_rate: Mapped[float] = mapped_column(Float, default=0.0)
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

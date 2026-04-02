@@ -74,6 +74,6 @@ def estimate_slippage(
     elif ratio < 0.1:
         return 0.0005  # 0.05% for medium orders
     elif ratio < 0.5:
-        return 0.002   # 0.2% for large orders
+        return 0.002  # 0.2% for large orders
     else:
-        return 0.01    # 1% for very large orders
+        return 0.01  # 1% for very large orders
