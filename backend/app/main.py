@@ -77,61 +77,60 @@ async def spot_futures_scanner_loop():
         try:
             if aggregator.tickers:
                 opportunities = await spot_futures.scan(aggregator.tickers)
-                if opportunities:
-                    best = opportunities[0]
-                    await ws_manager.broadcast({"type": "spot_futures", "data": best})
-                    await cycle_logger.log_spot_futures(best)
+                if not opportunities:
+                    await asyncio.sleep(3)
+                    continue
 
-                    # Notify detection
-                    await telegram.send(
-                        f"📊 <b>Spot-Futures Detected</b>\n"
-                        f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
-                        f"Net: {best['net_profit_pct']:.3f}%\n"
-                        f"Dir: {best['direction']}"
-                    )
+                # Log all opportunities to DB for analytics
+                for opp in opportunities:
+                    with contextlib.suppress(Exception):
+                        await cycle_logger.log_spot_futures(opp)
 
-                    # Execute if enabled
-                    logger.info(
-                        f"SF opportunity: {best['symbol']} "
-                        f"premium={best['premium_pct']:.4f}% "
-                        f"net={best['net_profit_pct']:.4f}% "
-                        f"dir={best['direction']}"
-                    )
-                    result = await sf_executor.execute(best)
-                    if result:
-                        logger.info(f"SF EXECUTED: {result}")
-                        await ws_manager.broadcast({"type": "sf_trade", "data": result})
-                        if best["direction"] == "futures_premium":
-                            amount = best["spot_price"] * float(result.get("spot_quantity", 0))
-                        else:
-                            fut_price = best["futures_price"]
-                            fut_qty = float(result.get("futures_quantity", 0))
-                            amount = fut_price * fut_qty
-                        await telegram.send(
-                            f"🔄 <b>Spot-Futures Executed</b>\n"
-                            f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
-                            f"Dir: {best['direction']}\n"
-                            f"Amount: ${amount:.2f}"
-                        )
+                # Pick the single best opportunity
+                best = max(opportunities, key=lambda o: o["net_profit_pct"])
+
+                # Broadcast all opportunities to UI via WebSocket
+                await ws_manager.broadcast({"type": "spot_futures", "data": best})
+
+                logger.info(
+                    f"SF scan: {len(opportunities)} opportunities | "
+                    f"best: {best['symbol']} {best['premium_pct']:.4f}% "
+                    f"net={best['net_profit_pct']:.4f} dir={best['direction']}"
+                )
+
+                # Attempt execution of the best one
+                result = await sf_executor.execute(best)
+                if result:
+                    logger.info(f"SF EXECUTED: {result}")
+                    await ws_manager.broadcast({"type": "sf_trade", "data": result})
+
+                    # Telegram: only notify on actual execution
+                    if best["direction"] == "futures_premium":
+                        amount = best["spot_price"] * float(result.get("spot_quantity", 0))
                     else:
-                        logger.info(f"SF executor returned None for {best['symbol']}")
+                        amount = best["futures_price"] * float(result.get("futures_quantity", 0))
+                    await telegram.send(
+                        f"🔄 <b>Spot-Futures Executed</b>\n"
+                        f"{best['symbol']}: {best['premium_pct']:.3f}%\n"
+                        f"Dir: {best['direction']}\n"
+                        f"Net: {best['net_profit_pct']:.3f}%\n"
+                        f"Amount: ${amount:.2f}"
+                    )
 
-                    # Check if we should close existing position
-                    if sf_executor.has_position and await sf_executor.should_close(
-                        aggregator.tickers
-                    ):
-                        close_r = await sf_executor.close_position(aggregator.tickers)
-                        if close_r:
-                            await ws_manager.broadcast({"type": "sf_trade", "data": close_r})
-                            pnl = close_r.get("pnl_usdt", 0)
-                            emoji = "✅" if pnl >= 0 else "❌"
-                            await telegram.send(
-                                f"{emoji} <b>Spot-Futures Closed</b>\n"
-                                f"{close_r['symbol']}\n"
-                                f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.4f}</b> "
-                                f"({close_r.get('pnl_pct', 0):.3f}%)\n"
-                                f"Balance: ${close_r.get('final_balance', 0):.2f}"
-                            )
+                # Check if we should close existing position
+                if sf_executor.has_position and await sf_executor.should_close(aggregator.tickers):
+                    close_r = await sf_executor.close_position(aggregator.tickers)
+                    if close_r:
+                        await ws_manager.broadcast({"type": "sf_trade", "data": close_r})
+                        pnl = close_r.get("pnl_usdt", 0)
+                        emoji = "✅" if pnl >= 0 else "❌"
+                        await telegram.send(
+                            f"{emoji} <b>Spot-Futures Closed</b>\n"
+                            f"{close_r['symbol']}\n"
+                            f"P&L: <b>{'+' if pnl >= 0 else ''}${pnl:.4f}</b> "
+                            f"({close_r.get('pnl_pct', 0):.3f}%)\n"
+                            f"Balance: ${close_r.get('final_balance', 0):.2f}"
+                        )
         except Exception as e:
             logger.error(f"Spot-futures scan error: {e}")
         await asyncio.sleep(3)

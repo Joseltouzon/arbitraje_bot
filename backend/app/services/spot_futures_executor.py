@@ -15,6 +15,32 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Step sizes per symbol (Binance LOT_SIZE filters)
+STEP_SIZES: dict[str, Decimal] = {
+    "BTCUSDT": Decimal("0.00001"),
+    "ETHUSDT": Decimal("0.0001"),
+    "BNBUSDT": Decimal("0.01"),
+    "SOLUSDT": Decimal("0.01"),
+}
+
+# Futures step sizes (usually different from spot)
+FUTURES_STEP_SIZES: dict[str, Decimal] = {
+    "BTCUSDT": Decimal("0.001"),
+    "ETHUSDT": Decimal("0.001"),
+    "BNBUSDT": Decimal("0.01"),
+    "SOLUSDT": Decimal("0.01"),
+}
+
+DEFAULT_STEP = Decimal("0.00001")
+DEFAULT_FUTURES_STEP = Decimal("0.001")
+
+
+def _round_down(value: Decimal, step: Decimal) -> Decimal:
+    """Round DOWN to nearest step size."""
+    if step <= 0:
+        return value
+    return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+
 
 @dataclass
 class SpotFuturesPosition:
@@ -66,6 +92,12 @@ class SpotFuturesExecutor:
         self._position = None
         return {"status": "disabled"}
 
+    def _get_spot_step(self, symbol: str) -> Decimal:
+        return STEP_SIZES.get(symbol, DEFAULT_STEP)
+
+    def _get_futures_step(self, symbol: str) -> Decimal:
+        return FUTURES_STEP_SIZES.get(symbol, DEFAULT_FUTURES_STEP)
+
     async def execute(self, opportunity: dict[str, Any]) -> dict[str, Any] | None:
         if not self.enabled:
             return None
@@ -99,30 +131,44 @@ class SpotFuturesExecutor:
             logger.warning(f"SKIP {symbol}: futures too low {futures_usdt}")
             return None
 
-        spot_spend = spot_usdt * Decimal("0.90")
-        futures_spend = futures_usdt * Decimal("0.90")
         start_time = time.time()
 
-        logger.info(f"Executing SF: {symbol} {direction} premium={premium_pct:.3f}%")
+        logger.info(
+            f"Executing SF: {symbol} {direction} premium={premium_pct:.3f}% "
+            f"spot=${spot_usdt:.2f} fut=${futures_usdt:.2f}"
+        )
 
         try:
+            spot_step = self._get_spot_step(symbol)
+            futures_step = self._get_futures_step(symbol)
+
             if direction == "futures_premium":
-                spot_qty = await self._buy_spot(symbol, spot_spend)
+                # Strategy: buy spot, sell futures
+                spot_qty = await self._buy_spot(symbol, spot_usdt, spot_step)
                 if spot_qty <= Decimal("0"):
                     logger.error(f"Spot buy returned 0 for {symbol}")
                     return None
 
-                futures_qty = await self._sell_futures(symbol, spot_qty)
+                futures_qty = await self._sell_futures(symbol, spot_qty, futures_step)
                 if futures_qty <= Decimal("0"):
                     logger.error("Futures sell failed, rolling back spot")
-                    await self._sell_spot(symbol, spot_qty)
+                    await self._sell_spot(symbol, spot_qty, spot_step)
                     return None
             else:
-                futures_qty = await self._buy_futures(symbol, futures_spend)
-                if futures_qty <= Decimal("0"):
-                    logger.error(f"Futures buy returned 0 for {symbol}")
+                # Strategy: sell spot, buy futures
+                # First, sell spot to get USDT
+                spot_qty = await self._sell_spot_for_usdt(symbol, spot_usdt, spot_step)
+                if spot_qty <= Decimal("0"):
+                    logger.error(f"Spot sell returned 0 for {symbol}")
                     return None
-                spot_qty = Decimal("0")
+
+                # Then buy futures with the freed USDT
+                futures_usdt_avail = await self.futures.get_futures_usdt_balance()
+                futures_qty = await self._buy_futures(symbol, futures_usdt_avail, futures_step)
+                if futures_qty <= Decimal("0"):
+                    logger.error("Futures buy failed, rolling back spot buy")
+                    await self._buy_spot_rollback(symbol, spot_qty, spot_step)
+                    return None
 
             self._position = SpotFuturesPosition(
                 symbol=symbol,
@@ -166,22 +212,38 @@ class SpotFuturesExecutor:
             return None
 
         pos = self._position
+        spot_step = self._get_spot_step(pos.symbol)
+        futures_step = self._get_futures_step(pos.symbol)
+
         logger.info(f"Closing position: {pos.symbol} {pos.direction}")
 
         try:
             if pos.direction == "futures_premium":
+                # Opened: buy spot + sell futures
+                # Close: sell spot + buy futures
                 await self.spot.create_market_order(
                     symbol=pos.symbol,
                     side="SELL",
-                    quantity=pos.spot_quantity,
+                    quantity=_round_down(pos.spot_quantity, spot_step),
                 )
                 await self.futures.create_futures_market_order(
                     symbol=pos.symbol,
                     side="BUY",
-                    quantity=pos.futures_quantity,
+                    quantity=_round_down(pos.futures_quantity, futures_step),
                 )
             else:
-                await self._close_futures_long(pos.symbol, pos.futures_quantity)
+                # Opened: sell spot + buy futures
+                # Close: buy spot + sell futures
+                await self.spot.create_market_order(
+                    symbol=pos.symbol,
+                    side="BUY",
+                    quantity=_round_down(pos.spot_quantity, spot_step),
+                )
+                await self.futures.create_futures_market_order(
+                    symbol=pos.symbol,
+                    side="SELL",
+                    quantity=_round_down(pos.futures_quantity, futures_step),
+                )
 
             # Transfer profit from futures to spot
             futures_bal = await self.futures.get_futures_usdt_balance()
@@ -250,49 +312,98 @@ class SpotFuturesExecutor:
 
         current_premium = (futures_price - spot_mid) / spot_mid * 100
 
+        # futures_premium: close when premium shrinks below 0.05%
         if pos.direction == "futures_premium" and current_premium < 0.05:
             return True
 
+        # futures_discount: close when discount shrinks (premium goes above -0.05%)
         return bool(pos.direction == "futures_discount" and current_premium > -0.05)
 
-    async def _buy_spot(self, symbol: str, amount: Decimal) -> Decimal:
+    async def _buy_spot(self, symbol: str, balance_usdt: Decimal, step: Decimal) -> Decimal:
+        """Buy spot with USDT balance."""
         ticker = await self.spot.get_ticker(symbol)
-        qty = (amount * Decimal("0.99") / Decimal(str(ticker.ask))).quantize(
-            Decimal("0.00001"), rounding=ROUND_DOWN
-        )
+        spend = balance_usdt * Decimal("0.90")
+        qty = _round_down(spend / Decimal(str(ticker.ask)), step)
+        if qty <= 0:
+            return Decimal("0")
         result = await self.spot.create_market_order(symbol, "BUY", qty)
         actual = Decimal(str(result.quantity))
         logger.info(f"Spot BUY: {actual} {symbol}")
         return actual
 
-    async def _sell_spot(self, symbol: str, quantity: Decimal) -> None:
-        qty = quantity.quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
+    async def _sell_spot(self, symbol: str, quantity: Decimal, step: Decimal) -> None:
+        """Sell spot quantity (rollback)."""
+        qty = _round_down(quantity, step)
+        if qty <= 0:
+            return
         await self.spot.create_market_order(symbol, "SELL", qty)
         logger.info(f"Spot SELL: {qty} {symbol}")
 
-    async def _sell_futures(self, symbol: str, quantity: Decimal) -> Decimal:
-        qty = quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+    async def _sell_spot_for_usdt(
+        self, symbol: str, balance_usdt: Decimal, step: Decimal
+    ) -> Decimal:
+        """
+        Sell spot base currency to get USDT.
+        First checks if we have the base currency to sell.
+        Returns the quantity sold.
+        """
+        # Extract base currency from symbol
+        from app.core.graph import QUOTE_CURRENCIES
+
+        base = ""
+        for quote in sorted(QUOTE_CURRENCIES, key=len, reverse=True):
+            if symbol.endswith(quote) and len(symbol) > len(quote):
+                base = symbol[: -len(quote)]
+                break
+
+        if not base:
+            logger.error(f"Cannot parse base from {symbol}")
+            return Decimal("0")
+
+        base_balance = await self.spot.get_balance(base)
+        qty = _round_down(base_balance * Decimal("0.99"), step)
+        if qty <= 0:
+            logger.warning(f"No {base} balance to sell for discount strategy")
+            return Decimal("0")
+
+        result = await self.spot.create_market_order(symbol, "SELL", qty)
+        actual = Decimal(str(result.quantity))
+        logger.info(f"Spot SELL (discount): {actual} {symbol}")
+        return actual
+
+    async def _buy_spot_rollback(self, symbol: str, target_qty: Decimal, step: Decimal) -> None:
+        """Rollback: buy back spot after futures buy failed."""
+        qty = _round_down(target_qty, step)
+        if qty <= 0:
+            return
+        await self.spot.create_market_order(symbol, "BUY", qty)
+        logger.info(f"Spot BUY (rollback): {qty} {symbol}")
+
+    async def _sell_futures(self, symbol: str, spot_qty: Decimal, step: Decimal) -> Decimal:
+        """Sell futures to match spot position."""
+        qty = _round_down(spot_qty, step)
         if qty <= 0:
             return Decimal("0")
         await self.futures.create_futures_market_order(symbol, "SELL", qty)
         logger.info(f"Futures SELL: {qty} {symbol}")
         return qty
 
-    async def _buy_futures(self, symbol: str, amount_usdt: Decimal) -> Decimal:
+    async def _buy_futures(self, symbol: str, amount_usdt: Decimal, step: Decimal) -> Decimal:
+        """Buy futures with USDT amount."""
         price = await self.futures.get_futures_price(symbol)
         if price <= 0:
             return Decimal("0")
-        qty = (amount_usdt * Decimal("0.99") / Decimal(str(price))).quantize(
-            Decimal("0.001"), rounding=ROUND_DOWN
-        )
+        spend = amount_usdt * Decimal("0.90")
+        qty = _round_down(spend / Decimal(str(price)), step)
         if qty <= 0:
             return Decimal("0")
         await self.futures.create_futures_market_order(symbol, "BUY", qty)
         logger.info(f"Futures BUY: {qty} {symbol}")
         return qty
 
-    async def _close_futures_long(self, symbol: str, quantity: Decimal) -> None:
-        qty = quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+    async def _close_futures_long(self, symbol: str, quantity: Decimal, step: Decimal) -> None:
+        """Close a futures long position."""
+        qty = _round_down(quantity, step)
         await self.futures.create_futures_market_order(symbol, "SELL", qty)
         logger.info(f"Futures close: SELL {qty} {symbol}")
 

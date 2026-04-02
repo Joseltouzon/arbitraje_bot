@@ -20,6 +20,9 @@
 | 14 | Settings persistencia (Redis) y thread-safe con asyncio.Lock | Medio | — |
 | 15 | Tests ampliados: 23 → 56 tests (live_executor, risk, redis, volatility) | Medio | — |
 | 16 | CI/CD pipeline (GitHub Actions: lint + test + build) | Medio | — |
+| 17 | Spot-Futures executor fix: discount abre ambas patas (sell spot + buy futures) | Alto | — |
+| 18 | Spot-Futures: selección automática de mejor oportunidad + notificación solo al ejecutar | Alto | — |
+| 19 | Spot-Futures: step sizes por símbolo para spot y futures | Medio | — |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 
@@ -38,6 +41,27 @@
 - **Primario**: WebSocket `!bookTicker` stream (latencia ~ms)
 - **Fallback**: REST polling cada 1s si WS falla
 - **Cache**: Redis persiste tickers para recovery post-crash
+
+### Spot-Futures: flujo de ejecución
+```
+Scanner (cada 3s)
+  └→ Detecta N oportunidades (BTC, ETH, SOL, BNB...)
+  └→ Ordena por net_profit_pct DESC
+  └→ Elige la MEJOR (mayor ganancia esperada)
+  └→ Intenta ejecutar con sf_executor
+       ├→ OK → notifica Telegram + broadcast WebSocket
+       └→ Skip → solo log (sin notificación)
+  └→ Si hay posición abierta, verifica should_close()
+       └→ Close → notifica P&L por Telegram
+```
+
+**Estrategias soportadas:**
+- **futures_premium**: buy spot + sell futures → cierra con sell spot + buy futures
+- **futures_discount**: sell spot + buy futures → cierra con buy spot + sell futures
+
+**Notificaciones Telegram:**
+- Solo se envían cuando el executor efectivamente abre o cierra una posición
+- No se notifican detecciones que no se ejecutan
 
 ### Endpoints clave
 - `GET /api/cycles/` — ciclos triangulares actuales
