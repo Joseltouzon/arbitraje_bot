@@ -54,9 +54,7 @@ class PaperTrader:
         # Check hourly trade limit
         now = datetime.now()
         cutoff = now.replace(minute=0, second=0, microsecond=0)
-        self._trades_this_hour = [
-            t for t in self._trades_this_hour if t >= cutoff
-        ]
+        self._trades_this_hour = [t for t in self._trades_this_hour if t >= cutoff]
         return len(self._trades_this_hour) < self.max_trades_per_hour
 
     async def try_execute(
@@ -112,6 +110,23 @@ class PaperTrader:
             "enabled": self._enabled,
             **self.executor.get_stats(),
         }
+
+    async def restore_from_redis(self, redis_cache) -> None:
+        """Restore paper trading state from Redis cache."""
+        try:
+            state = await redis_cache.load_paper_state()
+            if not state:
+                return
+            balance = state.get("current_balance")
+            if balance and balance > 0:
+                self.executor.balance_usdt = balance
+                self.executor.initial_balance = state.get("initial_balance", balance)
+                logger.info(
+                    f"Paper state restored: balance=${balance:.6f} "
+                    f"({state.get('total_trades', 0)} trades)"
+                )
+        except Exception as e:
+            logger.debug(f"Paper state restore failed: {e}")
 
     def get_recent_trades(self, limit: int = 20) -> list[dict]:
         """Get recent paper trades."""

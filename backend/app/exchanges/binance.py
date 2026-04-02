@@ -74,9 +74,7 @@ class BinanceAdapter(ExchangeAdapter):
 
     async def get_ticker(self, symbol: str) -> BidAsk:
         """GET /api/v3/ticker/bookTicker?symbol=BTCUSDT"""
-        resp = await self.client.get(
-            "/api/v3/ticker/bookTicker", params={"symbol": symbol}
-        )
+        resp = await self.client.get("/api/v3/ticker/bookTicker", params={"symbol": symbol})
         resp.raise_for_status()
         data = resp.json()
         return BidAsk(
@@ -88,21 +86,13 @@ class BinanceAdapter(ExchangeAdapter):
 
     async def get_orderbook(self, symbol: str, depth: int = 20) -> OrderBook:
         """GET /api/v3/depth?symbol=BTCUSDT&limit=20"""
-        resp = await self.client.get(
-            "/api/v3/depth", params={"symbol": symbol, "limit": depth}
-        )
+        resp = await self.client.get("/api/v3/depth", params={"symbol": symbol, "limit": depth})
         resp.raise_for_status()
         data = resp.json()
         return OrderBook(
             symbol=symbol,
-            bids=[
-                OrderBookLevel(price=float(p), quantity=float(q))
-                for p, q in data["bids"]
-            ],
-            asks=[
-                OrderBookLevel(price=float(p), quantity=float(q))
-                for p, q in data["asks"]
-            ],
+            bids=[OrderBookLevel(price=float(p), quantity=float(q)) for p, q in data["bids"]],
+            asks=[OrderBookLevel(price=float(p), quantity=float(q)) for p, q in data["asks"]],
             timestamp=datetime.now(),
         )
 
@@ -121,9 +111,7 @@ class BinanceAdapter(ExchangeAdapter):
                 return Decimal(balance["free"])
         return Decimal("0")
 
-    async def create_market_order(
-        self, symbol: str, side: str, quantity: Decimal
-    ) -> TradeResult:
+    async def create_market_order(self, symbol: str, side: str, quantity: Decimal) -> TradeResult:
         """POST /api/v3/order (market) - requires API key + secret"""
         if not self.api_key or not self.api_secret:
             raise ValueError("API key and secret required for trading")
@@ -197,18 +185,14 @@ class BinanceAdapter(ExchangeAdapter):
 
     async def get_order_status(self, symbol: str, order_id: str) -> dict:
         """GET /api/v3/order - check order status."""
-        params = self._sign(
-            {"symbol": symbol, "orderId": order_id}
-        )
+        params = self._sign({"symbol": symbol, "orderId": order_id})
         resp = await self.client.get("/api/v3/order", params=params)
         resp.raise_for_status()
         return resp.json()
 
     async def cancel_order(self, symbol: str, order_id: str) -> dict:
         """DELETE /api/v3/order - cancel an open order."""
-        params = self._sign(
-            {"symbol": symbol, "orderId": order_id}
-        )
+        params = self._sign({"symbol": symbol, "orderId": order_id})
         resp = await self.client.delete("/api/v3/order", params=params)
         resp.raise_for_status()
         return resp.json()
@@ -309,9 +293,7 @@ class BinanceAdapter(ExchangeAdapter):
             bnb_ticker = await self.get_ticker("BNBUSDT")
             bnb_value = float(bnb_bal) * bnb_ticker.bid
             if bnb_value >= 5.0:
-                bnb_qty = bnb_bal.quantize(
-                    Decimal("0.001"), rounding=Decimal.ROUND_DOWN
-                )
+                bnb_qty = bnb_bal.quantize(Decimal("0.001"), rounding=Decimal.ROUND_DOWN)
                 await self.create_market_order("BNBUSDT", "SELL", bnb_qty)
                 result["sold"].append("BNB")
                 result["total_recovered"] += bnb_value

@@ -156,9 +156,7 @@ class PaperExecutor:
         # Calculate results
         final_amount = current_amount
         profit = final_amount - self.balance_usdt
-        profit_pct = (
-            (profit / self.balance_usdt) * 100 if self.balance_usdt > 0 else 0
-        )
+        profit_pct = (profit / self.balance_usdt) * 100 if self.balance_usdt > 0 else 0
         total_fees = sum(o.fee for o in orders)
         latency_ms = (time.time() - start_time) * 1000
 
@@ -221,20 +219,12 @@ class PaperExecutor:
             "total_fees_paid": round(self.total_fees_paid, 6),
             "success_rate": round(self.success_rate, 2),
             "consecutive_losses": self.consecutive_losses,
-            "avg_profit_per_trade": round(
-                self.total_profit / len(self.trades), 6
-            )
+            "avg_profit_per_trade": round(self.total_profit / len(self.trades), 6)
             if self.trades
             else 0,
-            "best_trade": round(
-                max((t.profit_usdt for t in self.trades), default=0), 6
-            ),
-            "worst_trade": round(
-                min((t.profit_usdt for t in self.trades), default=0), 6
-            ),
-            "avg_latency_ms": round(
-                sum(t.latency_ms for t in self.trades) / len(self.trades), 2
-            )
+            "best_trade": round(max((t.profit_usdt for t in self.trades), default=0), 6),
+            "worst_trade": round(min((t.profit_usdt for t in self.trades), default=0), 6),
+            "avg_latency_ms": round(sum(t.latency_ms for t in self.trades) / len(self.trades), 2)
             if self.trades
             else 0,
         }

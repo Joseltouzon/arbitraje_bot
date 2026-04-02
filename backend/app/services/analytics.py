@@ -20,42 +20,35 @@ class Analytics:
         try:
             async with async_session_factory() as session:
                 # Total cycles detected
-                total_cycles = await session.scalar(
-                    select(func.count(CycleSnapshot.id))
-                ) or 0
+                total_cycles = await session.scalar(select(func.count(CycleSnapshot.id))) or 0
 
                 # Total trades executed
-                total_trades = await session.scalar(
-                    select(func.count(TradeHistory.id))
-                ) or 0
+                total_trades = await session.scalar(select(func.count(TradeHistory.id))) or 0
 
                 # Best profit pct
-                best_profit = await session.scalar(
-                    select(func.max(CycleSnapshot.net_profit_pct))
-                ) or 0.0
+                best_profit = (
+                    await session.scalar(select(func.max(CycleSnapshot.net_profit_pct))) or 0.0
+                )
 
                 # Avg profit pct
-                avg_profit = await session.scalar(
-                    select(func.avg(CycleSnapshot.net_profit_pct))
-                ) or 0.0
+                avg_profit = (
+                    await session.scalar(select(func.avg(CycleSnapshot.net_profit_pct))) or 0.0
+                )
 
                 # Total profit from trades
-                total_profit = await session.scalar(
-                    select(func.sum(TradeHistory.profit_usdt))
-                ) or 0.0
+                total_profit = (
+                    await session.scalar(select(func.sum(TradeHistory.profit_usdt))) or 0.0
+                )
 
                 # Success rate (trades with positive profit)
-                profitable_trades = await session.scalar(
-                    select(func.count(TradeHistory.id)).where(
-                        TradeHistory.profit_usdt > 0
+                profitable_trades = (
+                    await session.scalar(
+                        select(func.count(TradeHistory.id)).where(TradeHistory.profit_usdt > 0)
                     )
-                ) or 0
-
-                success_rate = (
-                    (profitable_trades / total_trades * 100)
-                    if total_trades > 0
-                    else 0.0
+                    or 0
                 )
+
+                success_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
 
                 return {
                     "total_cycles_detected": total_cycles,
@@ -76,9 +69,7 @@ class Analytics:
                 "success_rate": 0.0,
             }
 
-    async def get_profit_timeseries(
-        self, hours: int = 24
-    ) -> list[dict[str, Any]]:
+    async def get_profit_timeseries(self, hours: int = 24) -> list[dict[str, Any]]:
         """Get profit over time for charting."""
         try:
             async with async_session_factory() as session:
@@ -86,15 +77,11 @@ class Analytics:
 
                 stmt = (
                     select(
-                        func.date_trunc("hour", CycleSnapshot.detected_at).label(
-                            "hour"
-                        ),
+                        func.date_trunc("hour", CycleSnapshot.detected_at).label("hour"),
                         func.count(CycleSnapshot.id).label("count"),
                         func.avg(CycleSnapshot.net_profit_pct).label("avg_profit"),
                         func.max(CycleSnapshot.net_profit_pct).label("max_profit"),
-                        func.sum(CycleSnapshot.net_profit_usdt).label(
-                            "total_profit"
-                        ),
+                        func.sum(CycleSnapshot.net_profit_usdt).label("total_profit"),
                     )
                     .where(CycleSnapshot.detected_at >= cutoff)
                     .group_by("hour")
@@ -123,9 +110,7 @@ class Analytics:
         try:
             async with async_session_factory() as session:
                 stmt = (
-                    select(CycleSnapshot)
-                    .order_by(CycleSnapshot.net_profit_pct.desc())
-                    .limit(limit)
+                    select(CycleSnapshot).order_by(CycleSnapshot.net_profit_pct.desc()).limit(limit)
                 )
                 result = await session.execute(stmt)
                 rows = result.scalars().all()

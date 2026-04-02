@@ -26,6 +26,7 @@ from app.deps import (
     futures_exchange,
     live_executor,
     paper_trader,
+    redis_cache,
     scanner,
     sf_executor,
     spot_futures,
@@ -78,9 +79,7 @@ async def spot_futures_scanner_loop():
                 opportunities = await spot_futures.scan(aggregator.tickers)
                 if opportunities:
                     best = opportunities[0]
-                    await ws_manager.broadcast(
-                        {"type": "spot_futures", "data": best}
-                    )
+                    await ws_manager.broadcast({"type": "spot_futures", "data": best})
                     await cycle_logger.log_spot_futures(best)
 
                     # Notify detection
@@ -101,14 +100,12 @@ async def spot_futures_scanner_loop():
                     result = await sf_executor.execute(best)
                     if result:
                         logger.info(f"SF EXECUTED: {result}")
-                        await ws_manager.broadcast(
-                            {"type": "sf_trade", "data": result}
-                        )
-                        if best['direction'] == 'futures_premium':
-                            amount = best['spot_price'] * float(result.get('spot_quantity', 0))
+                        await ws_manager.broadcast({"type": "sf_trade", "data": result})
+                        if best["direction"] == "futures_premium":
+                            amount = best["spot_price"] * float(result.get("spot_quantity", 0))
                         else:
-                            fut_price = best['futures_price']
-                            fut_qty = float(result.get('futures_quantity', 0))
+                            fut_price = best["futures_price"]
+                            fut_qty = float(result.get("futures_quantity", 0))
                             amount = fut_price * fut_qty
                         await telegram.send(
                             f"🔄 <b>Spot-Futures Executed</b>\n"
@@ -120,15 +117,12 @@ async def spot_futures_scanner_loop():
                         logger.info(f"SF executor returned None for {best['symbol']}")
 
                     # Check if we should close existing position
-                    if (
-                        sf_executor.has_position
-                        and await sf_executor.should_close(aggregator.tickers)
+                    if sf_executor.has_position and await sf_executor.should_close(
+                        aggregator.tickers
                     ):
                         close_r = await sf_executor.close_position(aggregator.tickers)
                         if close_r:
-                            await ws_manager.broadcast(
-                                {"type": "sf_trade", "data": close_r}
-                            )
+                            await ws_manager.broadcast({"type": "sf_trade", "data": close_r})
                             pnl = close_r.get("pnl_usdt", 0)
                             emoji = "✅" if pnl >= 0 else "❌"
                             await telegram.send(
@@ -161,6 +155,8 @@ async def notify_cycles_telegram(cycles_data: list[dict]) -> None:
 async def persist_cycles(cycles_data: list[dict]) -> None:
     for cycle in cycles_data:
         await cycle_logger.log_cycle(cycle)
+    # Also persist to Redis for fast access
+    await redis_cache.save_cycles(cycles_data)
 
 
 async def execute_paper_trades(cycles_data: list[dict]) -> None:
@@ -169,9 +165,7 @@ async def execute_paper_trades(cycles_data: list[dict]) -> None:
     for cycle in cycles_data:
         result = await paper_trader.try_execute(cycle, scanner.tickers)
         if result:
-            await ws_manager.broadcast(
-                {"type": "paper_trade", "data": result}
-            )
+            await ws_manager.broadcast({"type": "paper_trade", "data": result})
             await telegram.notify_paper_trade(result)
 
 
@@ -226,10 +220,17 @@ if settings.auto_trade:
 async def lifespan(app: FastAPI):
     global _scan_task, _ws_task, _sf_task, _tg_task
     logger.info("Starting crypto-arbitrage backend...")
-    logger.info(
-        f"Mode: {settings.operation_mode} | "
-        f"Auto-trade: {settings.auto_trade}"
-    )
+
+    # Connect Redis
+    await redis_cache.connect()
+
+    # Restore settings and paper state from Redis
+    from app.api.routes.settings_route import restore_settings_from_redis
+
+    await restore_settings_from_redis()
+    await paper_trader.restore_from_redis(redis_cache)
+
+    logger.info(f"Mode: {settings.operation_mode} | Auto-trade: {settings.auto_trade}")
     logger.info(
         f"Paper: {'ON' if paper_trader.enabled else 'OFF'} | "
         f"Live: {'READY' if settings.auto_trade else 'OFF'}"
@@ -256,6 +257,17 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down...")
+
+    # Save state to Redis before shutdown
+    if redis_cache.connected:
+        from app.api.routes.settings_route import _get_settings_dict
+
+        await redis_cache.save_settings(_get_settings_dict())
+        if paper_trader.enabled:
+            await redis_cache.save_paper_state(paper_trader.get_stats())
+        if aggregator.tickers:
+            await redis_cache.save_tickers(aggregator.tickers)
+
     scanner.stop()
     aggregator.stop()
     if _scan_task:
@@ -276,6 +288,7 @@ async def lifespan(app: FastAPI):
             await _tg_task
     await exchange.close()
     await futures_exchange.close()
+    await redis_cache.close()
 
 
 app = FastAPI(
@@ -294,19 +307,11 @@ app.add_middleware(
 
 app.include_router(cycles.router, prefix="/api/cycles", tags=["cycles"])
 app.include_router(prices.router, prefix="/api/prices", tags=["prices"])
-app.include_router(
-    settings_route.router, prefix="/api/settings", tags=["settings"]
-)
+app.include_router(settings_route.router, prefix="/api/settings", tags=["settings"])
 app.include_router(history.router, prefix="/api/history", tags=["history"])
-app.include_router(
-    paper_route.router, prefix="/api/paper", tags=["paper-trading"]
-)
-app.include_router(
-    live_route.router, prefix="/api/live", tags=["live-trading"]
-)
-app.include_router(
-    spot_futures_route.router, prefix="/api/spot-futures", tags=["spot-futures"]
-)
+app.include_router(paper_route.router, prefix="/api/paper", tags=["paper-trading"])
+app.include_router(live_route.router, prefix="/api/live", tags=["live-trading"])
+app.include_router(spot_futures_route.router, prefix="/api/spot-futures", tags=["spot-futures"])
 
 
 @app.get("/health")
@@ -317,6 +322,7 @@ async def health() -> dict[str, Any]:
         "auto_trade": settings.auto_trade,
         "paper_trading": paper_trader.enabled,
         "live_trading": live_executor.enabled,
+        "redis": await redis_cache.get_stats(),
         "ws_stream": aggregator.get_stats(),
         "scanner": scanner.get_stats(),
         "paper": paper_trader.get_stats(),
@@ -333,17 +339,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         if scanner.cycles:
-            await websocket.send_json(
-                {"type": "cycles", "data": scanner.cycles}
-            )
+            await websocket.send_json({"type": "cycles", "data": scanner.cycles})
         if paper_trader.enabled:
-            await websocket.send_json(
-                {"type": "paper_stats", "data": paper_trader.get_stats()}
-            )
+            await websocket.send_json({"type": "paper_stats", "data": paper_trader.get_stats()})
         if live_executor.enabled:
-            await websocket.send_json(
-                {"type": "live_stats", "data": live_executor.get_stats()}
-            )
+            await websocket.send_json({"type": "live_stats", "data": live_executor.get_stats()})
         while True:
             try:
                 data = await websocket.receive_text()

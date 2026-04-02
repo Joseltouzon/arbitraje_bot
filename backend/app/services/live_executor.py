@@ -132,10 +132,7 @@ class LiveExecutor:
             balance = await self.exchange.get_balance(currency)
             self._last_balance_check[currency] = balance
             if balance < required:
-                logger.warning(
-                    f"Insufficient {currency} balance: "
-                    f"have {balance}, need {required}"
-                )
+                logger.warning(f"Insufficient {currency} balance: have {balance}, need {required}")
                 return False
             return True
         except Exception as e:
@@ -207,8 +204,7 @@ class LiveExecutor:
 
                 if available < needed:
                     logger.warning(
-                        f"SKIP: {pair} insufficient depth "
-                        f"(need {needed:.4f}, have {available:.4f})"
+                        f"SKIP: {pair} insufficient depth (need {needed:.4f}, have {available:.4f})"
                     )
                     return None
             except Exception as e:
@@ -221,9 +217,7 @@ class LiveExecutor:
                 pair = leg["pair"]
                 side = leg["side"].upper()
 
-                quantity = await self._calculate_quantity(
-                    pair, side, leg, tickers
-                )
+                quantity = await self._calculate_quantity(pair, side, leg, tickers)
 
                 if quantity <= 0:
                     status = "failed"
@@ -239,9 +233,7 @@ class LiveExecutor:
 
                 # Try limit order first, fallback to market
                 try:
-                    result = await self._place_order_with_fallback(
-                        pair, side, quantity, tickers
-                    )
+                    result = await self._place_order_with_fallback(pair, side, quantity, tickers)
                     duration = (time.time() - leg_start) * 1000
 
                     trade_legs.append(
@@ -274,8 +266,7 @@ class LiveExecutor:
                                     quantity=completed.quantity,
                                 )
                                 logger.info(
-                                    f"Reverted: {revert_side} "
-                                    f"{completed.quantity} {completed.pair}"
+                                    f"Reverted: {revert_side} {completed.quantity} {completed.pair}"
                                 )
                             except Exception as re:
                                 logger.error(f"Revert failed for {completed.pair}: {re}")
@@ -303,9 +294,7 @@ class LiveExecutor:
         profit = final_balance - initial_balance
         profit_pct = float(profit / initial_balance * 100) if initial_balance > 0 else 0
         total_fees = sum(
-            Decimal(str(leg.order_result.fee))
-            for leg in trade_legs
-            if leg.order_result
+            Decimal(str(leg.order_result.fee)) for leg in trade_legs if leg.order_result
         )
 
         # Clean up dust / remanentes
@@ -376,10 +365,7 @@ class LiveExecutor:
             raise ValueError(f"No ticker for {pair}")
 
         # Set limit price at best available
-        limit_price = (
-            Decimal(str(ticker.bid)) if side == "BUY"
-            else Decimal(str(ticker.ask))
-        )
+        limit_price = Decimal(str(ticker.bid)) if side == "BUY" else Decimal(str(ticker.ask))
 
         try:
             # Place limit order
@@ -406,17 +392,12 @@ class LiveExecutor:
                     fills = status.get("fills", [])
                     total_fee = sum(float(f["commission"]) for f in fills)
                     avg_price = (
-                        sum(
-                            float(f["price"]) * float(f["qty"])
-                            for f in fills
-                        )
+                        sum(float(f["price"]) * float(f["qty"]) for f in fills)
                         / float(status.get("executedQty", 1))
                         if fills
                         else float(status.get("price", 0))
                     )
-                    logger.info(
-                        f"Limit order FILLED after wait: {pair} {side}"
-                    )
+                    logger.info(f"Limit order FILLED after wait: {pair} {side}")
                     return TradeResult(
                         order_id=order_id,
                         symbol=pair,
@@ -430,18 +411,13 @@ class LiveExecutor:
 
             # Cancel unfilled limit order
             await self.exchange.cancel_order(pair, order_id)
-            logger.info(
-                f"Limit order cancelled (timeout), falling back to MARKET: "
-                f"{pair} {side}"
-            )
+            logger.info(f"Limit order cancelled (timeout), falling back to MARKET: {pair} {side}")
 
         except Exception as e:
             logger.warning(f"Limit order failed: {e}, trying MARKET")
 
         # Fallback to market order
-        return await self.exchange.create_market_order(
-            symbol=pair, side=side, quantity=quantity
-        )
+        return await self.exchange.create_market_order(symbol=pair, side=side, quantity=quantity)
 
     async def _calculate_quantity(
         self,
@@ -458,14 +434,18 @@ class LiveExecutor:
 
         ticker = tickers[pair]
 
+        # Parse base/quote from pair using leg context
+        from_currency = leg.get("from_currency", "")
+        to_currency = leg.get("to_currency", "")
+
         if side == "BUY":
-            # Buying: use quote currency (e.g., USDT for BTCUSDT)
-            quote = pair.replace(leg.get("to_currency", ""), "")
+            # Buying base with quote: use quote currency balance
+            # e.g. BUY BTC on BTCUSDT → quote = USDT
+            quote = to_currency if to_currency else self._extract_quote(pair)
             if not quote:
                 quote = "USDT"
 
             balance = await self.exchange.get_balance(quote)
-            # Reserve 1% for fees and rounding
             available = balance * Decimal("0.99")
             price = Decimal(str(ticker.ask))
 
@@ -473,25 +453,40 @@ class LiveExecutor:
                 return Decimal("0")
 
             quantity = available / price
-
-            # Round DOWN to avoid exceeding balance
             quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
-
             return quantity
 
         else:
-            # Selling: use base currency balance
-            base = pair.replace("USDT", "").replace("BTC", "").replace("ETH", "")
+            # Selling base: use base currency balance
+            # e.g. SELL BTC on BTCUSDT → base = BTC
+            base = from_currency if from_currency else self._extract_base(pair)
             if not base:
-                base = leg.get("from_currency", "")
+                return Decimal("0")
 
             balance = await self.exchange.get_balance(base)
-            # Reserve small amount for fees
             quantity = balance * Decimal("0.99")
-            # Round DOWN to avoid exceeding balance
             quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
-
             return quantity
+
+    @staticmethod
+    def _extract_quote(pair: str) -> str:
+        """Extract quote currency from pair string (e.g. BTCUSDT → USDT)."""
+        from app.core.graph import QUOTE_CURRENCIES
+
+        for quote in sorted(QUOTE_CURRENCIES, key=len, reverse=True):
+            if pair.endswith(quote) and len(pair) > len(quote):
+                return quote
+        return ""
+
+    @staticmethod
+    def _extract_base(pair: str) -> str:
+        """Extract base currency from pair string (e.g. BTCUSDT → BTC)."""
+        from app.core.graph import QUOTE_CURRENCIES
+
+        for quote in sorted(QUOTE_CURRENCIES, key=len, reverse=True):
+            if pair.endswith(quote) and len(pair) > len(quote):
+                return pair[: -len(quote)]
+        return ""
 
     async def _log_trade(self, trade, status: str) -> None:
         """Log trade to database."""
@@ -527,11 +522,7 @@ class LiveExecutor:
             "profitable_trades": profitable,
             "failed_trades": failed,
             "partial_trades": partial,
-            "success_rate": round(
-                profitable / len(self.trades) * 100, 2
-            )
-            if self.trades
-            else 0,
+            "success_rate": round(profitable / len(self.trades) * 100, 2) if self.trades else 0,
             "total_profit_usdt": float(self.total_profit),
             "total_fees_usdt": float(self.total_fees),
             "net_profit_usdt": float(self.total_profit),

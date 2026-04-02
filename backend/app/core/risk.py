@@ -49,9 +49,7 @@ class RiskManager:
 
         if profit < 0:
             self.consecutive_losses += 1
-            logger.warning(
-                f"Loss recorded. Consecutive losses: {self.consecutive_losses}"
-            )
+            logger.warning(f"Loss recorded. Consecutive losses: {self.consecutive_losses}")
         else:
             self.consecutive_losses = 0
 

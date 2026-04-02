@@ -15,7 +15,7 @@ def test_profitable_cycle():
     rates = [
         1 / 85000,  # USDT -> BTC (buy BTC, get rate = 1/ask)
         1 / 0.0377,  # BTC -> ETH (buy ETH, get rate = 1/ask)
-        3240,        # ETH -> USDT (sell ETH, get rate = bid)
+        3240,  # ETH -> USDT (sell ETH, get rate = bid)
     ]
 
     result = calculate_cycle_profit(
@@ -37,8 +37,8 @@ def test_loss_cycle():
     """Test a cycle that results in a loss."""
     rates = [
         1 / 85010,  # Buy BTC (high ask)
-        1 / 0.0377, # Buy ETH
-        3190,       # Sell ETH low (not enough gap)
+        1 / 0.0377,  # Buy ETH
+        3190,  # Sell ETH low (not enough gap)
     ]
 
     result = calculate_cycle_profit(

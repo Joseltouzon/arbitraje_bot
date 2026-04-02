@@ -161,12 +161,10 @@ class CycleScanner:
 
                 # Adaptive interval: scan faster when volatile
                 from app.deps import volatility
+
                 volatility.update(self._tickers)
 
-                interval = (
-                    base_interval * 0.5 if volatility.is_volatile
-                    else base_interval * 2.0
-                )
+                interval = base_interval * 0.5 if volatility.is_volatile else base_interval * 2.0
 
             except Exception as e:
                 self._scan_errors += 1
@@ -185,9 +183,7 @@ class CycleScanner:
         return {
             "scan_count": self._scan_count,
             "scan_errors": self._scan_errors,
-            "last_scan": (
-                self._last_scan_time.isoformat() if self._last_scan_time else None
-            ),
+            "last_scan": (self._last_scan_time.isoformat() if self._last_scan_time else None),
             "current_cycles": len(self._cycles),
             "top_profit": self._cycles[0]["net_profit_pct"] if self._cycles else 0,
             "tickers_loaded": len(self._tickers),
@@ -199,6 +195,7 @@ class CycleScanner:
         """Fetch real balance from Binance for profit calculations."""
         try:
             from app.deps import exchange
+
             balance = await exchange.get_balance("USDT")
             bal_float = float(balance)
             if bal_float > 10:

@@ -43,9 +43,7 @@ class BinanceFuturesAdapter:
 
     async def get_futures_price(self, symbol: str) -> float:
         """GET /fapi/v1/ticker/price - get current futures price."""
-        resp = await self.client.get(
-            "/fapi/v1/ticker/price", params={"symbol": symbol}
-        )
+        resp = await self.client.get("/fapi/v1/ticker/price", params={"symbol": symbol})
         resp.raise_for_status()
         return float(resp.json()["price"])
 
@@ -103,9 +101,7 @@ class BinanceFuturesAdapter:
         resp.raise_for_status()
         return resp.json()
 
-    async def transfer_spot_to_futures(
-        self, asset: str, amount: Decimal
-    ) -> dict[str, Any]:
+    async def transfer_spot_to_futures(self, asset: str, amount: Decimal) -> dict[str, Any]:
         """POST /sapi/v1/futures/transfer - transfer from spot to futures."""
         params = self._sign(
             {
@@ -114,15 +110,11 @@ class BinanceFuturesAdapter:
                 "type": 1,  # 1 = spot to futures
             }
         )
-        resp = await self.client.post(
-            "/sapi/v1/futures/transfer", params=params
-        )
+        resp = await self.client.post("/sapi/v1/futures/transfer", params=params)
         resp.raise_for_status()
         return resp.json()
 
-    async def transfer_futures_to_spot(
-        self, asset: str, amount: Decimal
-    ) -> dict[str, Any]:
+    async def transfer_futures_to_spot(self, asset: str, amount: Decimal) -> dict[str, Any]:
         """POST /sapi/v1/futures/transfer - transfer from futures to spot."""
         params = self._sign(
             {
@@ -131,9 +123,7 @@ class BinanceFuturesAdapter:
                 "type": 2,  # 2 = futures to spot
             }
         )
-        resp = await self.client.post(
-            "/sapi/v1/futures/transfer", params=params
-        )
+        resp = await self.client.post("/sapi/v1/futures/transfer", params=params)
         resp.raise_for_status()
         return resp.json()
 

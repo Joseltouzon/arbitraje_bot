@@ -14,11 +14,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Binance WebSocket endpoints
 WS_ALL_BOOK_TICKERS = "wss://stream.binance.com:9443/ws/!bookTicker"
 REST_ALL_TICKERS = "https://api.binance.com/api/v3/ticker/bookTicker"
 
-# Type for update callback
 PriceCallback = Callable[[dict[str, BidAsk]], Any]
 
 
@@ -26,7 +24,7 @@ class BinanceWsStream:
     """
     Real-time price feed from Binance via WebSocket.
     Receives bid/ask updates the instant they change.
-    Falls back to REST if WebSocket fails.
+    Falls back to REST for initial snapshot.
     """
 
     def __init__(self) -> None:
@@ -38,6 +36,7 @@ class BinanceWsStream:
         self._last_update: datetime | None = None
         self._connected = False
         self._reconnect_delay = 1.0
+        self._ws_messages = 0
 
     @property
     def tickers(self) -> dict[str, BidAsk]:
@@ -52,7 +51,6 @@ class BinanceWsStream:
         return self._update_count
 
     def on_update(self, callback: PriceCallback) -> None:
-        """Register a callback for price updates."""
         self._callbacks.append(callback)
 
     async def load_initial_snapshot(self) -> dict[str, BidAsk]:
@@ -64,31 +62,27 @@ class BinanceWsStream:
                 data = resp.json()
 
                 for item in data:
-                    # REST format: symbol, bidPrice, askPrice, bidQty, askQty
-                    symbol = item.get("symbol", item.get("s", ""))
-                    bid = float(item.get("bidPrice", item.get("b", 0)))
-                    ask = float(item.get("askPrice", item.get("a", 0)))
+                    symbol = item.get("symbol", "")
+                    bid = float(item.get("bidPrice", 0))
+                    ask = float(item.get("askPrice", 0))
 
                     if bid > 0 and ask > 0 and bid < ask:
                         self._tickers[symbol] = BidAsk(
                             bid=bid,
                             ask=ask,
-                            bid_qty=float(item.get("bidQty", item.get("B", 0))),
-                            ask_qty=float(item.get("askQty", item.get("A", 0))),
+                            bid_qty=float(item.get("bidQty", 0)),
+                            ask_qty=float(item.get("askQty", 0)),
                         )
 
-                logger.info(
-                    f"WebSocket: initial snapshot loaded "
-                    f"({len(self._tickers)} pairs)"
-                )
+                logger.info(f"WS initial snapshot loaded ({len(self._tickers)} pairs)")
                 return self._tickers
 
         except Exception as e:
-            logger.error(f"Failed to load initial snapshot: {e}")
+            logger.error(f"WS snapshot failed: {e}")
             return {}
 
     async def start(self) -> None:
-        """Start the WebSocket stream."""
+        """Start the WebSocket stream with auto-reconnect."""
         self._running = True
 
         # Load initial snapshot via REST
@@ -98,9 +92,16 @@ class BinanceWsStream:
         while self._running:
             try:
                 await self._connect_and_stream()
+            except websockets.exceptions.ConnectionClosed as e:
+                self._connected = False
+                logger.warning(
+                    f"WS closed (code={e.code}). Reconnecting in {self._reconnect_delay}s..."
+                )
+                await asyncio.sleep(self._reconnect_delay)
+                self._reconnect_delay = min(self._reconnect_delay * 2, 30.0)
             except Exception as e:
                 self._connected = False
-                logger.error(f"WebSocket error: {e}. Reconnecting in {self._reconnect_delay}s...")
+                logger.error(f"WS error: {e}. Reconnecting in {self._reconnect_delay}s...")
                 await asyncio.sleep(self._reconnect_delay)
                 self._reconnect_delay = min(self._reconnect_delay * 2, 30.0)
 
@@ -111,21 +112,23 @@ class BinanceWsStream:
             ping_interval=20,
             ping_timeout=10,
             close_timeout=5,
+            open_timeout=10,
         ) as ws:
             self._ws = ws
             self._connected = True
             self._reconnect_delay = 1.0
-            logger.info("WebSocket connected to Binance bookTicker stream")
+            logger.info("WS connected to Binance !bookTicker stream")
 
             async for message in ws:
                 if not self._running:
                     break
 
+                self._ws_messages += 1
                 try:
                     data = json.loads(message)
                     self._process_ticker_update(data)
-                except Exception as e:
-                    logger.error(f"WebSocket parse error: {e}")
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.debug(f"WS parse error: {e}")
 
     def _process_ticker_update(self, data: dict) -> None:
         """Process a single ticker update from WebSocket."""
@@ -139,14 +142,11 @@ class BinanceWsStream:
         if bid <= 0 or ask <= 0 or bid >= ask:
             return
 
-        bid_qty = float(data.get("B", 0))
-        ask_qty = float(data.get("A", 0))
-
         self._tickers[symbol] = BidAsk(
             bid=bid,
             ask=ask,
-            bid_qty=bid_qty,
-            ask_qty=ask_qty,
+            bid_qty=float(data.get("B", 0)),
+            ask_qty=float(data.get("A", 0)),
         )
 
         self._update_count += 1
@@ -158,21 +158,22 @@ class BinanceWsStream:
                 try:
                     cb(self._tickers)
                 except Exception as e:
-                    logger.error(f"Callback error: {e}")
+                    logger.error(f"WS callback error: {e}")
 
     def stop(self) -> None:
-        """Stop the WebSocket stream."""
         self._running = False
         self._connected = False
-        logger.info("WebSocket stream stopped")
+
+    async def close(self) -> None:
+        self.stop()
+        if self._ws:
+            await self._ws.close()
 
     def get_stats(self) -> dict[str, Any]:
-        """Get stream statistics."""
         return {
             "connected": self._connected,
             "pairs_loaded": len(self._tickers),
             "total_updates": self._update_count,
-            "last_update": (
-                self._last_update.isoformat() if self._last_update else None
-            ),
+            "ws_messages": self._ws_messages,
+            "last_update": (self._last_update.isoformat() if self._last_update else None),
         }

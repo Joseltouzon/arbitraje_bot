@@ -66,9 +66,7 @@ def test_bellman_ford_finds_profitable_cycle():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.1
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.1)
 
     assert len(cycles) > 0
     cycle_currencies = [c["currencies"] for c in cycles]
@@ -85,14 +83,15 @@ def test_dfs_finds_triangular_cycle():
 
     graph, metadata = build_currency_graph(pairs)
     cycles = _find_triangular_cycles_dfs(
-        graph, metadata, start_currency="USDT",
-        min_profit_pct=0.1, fee_rate=0.001,
+        graph,
+        metadata,
+        start_currency="USDT",
+        min_profit_pct=0.1,
+        fee_rate=0.001,
     )
 
     assert len(cycles) > 0
-    assert any(
-        c["currencies"] == ["USDT", "BTC", "ETH", "USDT"] for c in cycles
-    )
+    assert any(c["currencies"] == ["USDT", "BTC", "ETH", "USDT"] for c in cycles)
 
 
 def test_no_profitable_cycle():
@@ -104,9 +103,7 @@ def test_no_profitable_cycle():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.2
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.2)
 
     assert len(cycles) == 0
 
@@ -120,9 +117,7 @@ def test_zero_spread_pair():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.1
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.1)
 
     assert len(cycles) == 0
 
@@ -134,9 +129,7 @@ def test_missing_start_currency():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.1
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.1)
 
     assert len(cycles) == 0
 
@@ -148,9 +141,7 @@ def test_cycle_uses_only_three_pairs():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.1
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.1)
 
     # Only 2 currencies, can't form a 3-leg cycle
     assert len(cycles) == 0
@@ -168,9 +159,7 @@ def test_multiple_cycles_sorted():
     }
 
     graph, metadata = build_currency_graph(pairs)
-    cycles = bellman_ford_cycles(
-        graph, metadata, start_currency="USDT", min_profit_pct=0.05
-    )
+    cycles = bellman_ford_cycles(graph, metadata, start_currency="USDT", min_profit_pct=0.05)
 
     # Should be sorted descending by profit
     for i in range(len(cycles) - 1):

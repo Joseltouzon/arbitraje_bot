@@ -30,9 +30,7 @@ class ExchangeAdapter(ABC):
         ...
 
     @abstractmethod
-    async def create_market_order(
-        self, symbol: str, side: str, quantity: Decimal
-    ) -> TradeResult:
+    async def create_market_order(self, symbol: str, side: str, quantity: Decimal) -> TradeResult:
         """Place a market order."""
         ...
 
