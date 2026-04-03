@@ -10,6 +10,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        rewrite: (path) => path,
       },
       '/health': {
         target: 'http://localhost:8000',
@@ -18,6 +19,8 @@ export default defineConfig({
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ws/, '/ws'),
       },
     },
   },

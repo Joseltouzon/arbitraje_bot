@@ -335,6 +335,13 @@ async def health() -> dict[str, Any]:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Accept connections from allowed origins
+    origin = websocket.headers.get("origin", "")
+    allowed_origins = ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"]
+    if origin and origin not in allowed_origins:
+        await websocket.close(code=1008)
+        return
+
     await ws_manager.connect(websocket)
     try:
         if scanner.cycles:

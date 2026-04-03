@@ -37,14 +37,19 @@ export function useWebSocket() {
 
   const connect = useCallback(() => {
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setConnected(true);
         addLog('info', 'Connected');
-        ws.send('ping');
+        try { ws.send('ping'); } catch { /* ignore */ }
+      };
+
+      ws.onerror = (error) => {
+        console.log('WebSocket error:', error);
+        addLog('error', 'WS connection error');
       };
 
       ws.onmessage = (event) => {

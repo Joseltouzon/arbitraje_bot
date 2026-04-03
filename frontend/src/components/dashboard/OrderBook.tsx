@@ -13,6 +13,7 @@ export function OrderBook() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -20,6 +21,7 @@ export function OrderBook() {
       if (res && res.tickers) {
         setTickers(res.tickers);
         setTotal(res.total || Object.keys(res.tickers).length);
+        setLastUpdate(new Date());
         setError(null);
       }
       setLoading(false);
@@ -31,7 +33,8 @@ export function OrderBook() {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 5000);
+    // Poll every 3 seconds for live updates
+    const interval = setInterval(load, 3000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -67,8 +70,19 @@ export function OrderBook() {
     <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
       <div className="flex justify-between items-center mb-3">
         <h3 className="text-white font-semibold">Order Book (Top Tickers)</h3>
-        <span className="text-gray-400 text-sm">{total} pairs</span>
+        <div className="flex items-center gap-2">
+          <span className="text-green-500 text-xs flex items-center gap-1">
+            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            LIVE
+          </span>
+          <span className="text-gray-400 text-sm">{total} pairs</span>
+        </div>
       </div>
+      {lastUpdate && (
+        <div className="text-xs text-gray-500 mb-2">
+          Updated: {lastUpdate.toLocaleTimeString()}
+        </div>
+      )}
 
       <input
         type="text"

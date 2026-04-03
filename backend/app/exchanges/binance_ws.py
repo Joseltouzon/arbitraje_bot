@@ -126,6 +126,9 @@ class BinanceWsStream:
                 self._ws_messages += 1
                 try:
                     data = json.loads(message)
+                    # Handle both single and combined stream formats
+                    if isinstance(data, dict) and "data" in data:
+                        data = data["data"]
                     self._process_ticker_update(data)
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug(f"WS parse error: {e}")

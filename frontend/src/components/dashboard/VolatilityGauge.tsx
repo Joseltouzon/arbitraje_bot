@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
+import { fetchHealth } from '../../lib/api';
 
 export function VolatilityGauge() {
   const [score, setScore] = useState(0);
+  const [updateCount, setUpdateCount] = useState(0);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch('/health');
-        const data = await res.json();
+        const data = await fetchHealth();
         if (data.volatility) {
           setScore(data.volatility.volatility_score || 0);
+          setUpdateCount(data.volatility.update_count || 0);
         }
         setLoaded(true);
       } catch {
@@ -18,7 +20,7 @@ export function VolatilityGauge() {
       }
     };
     load();
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -30,7 +32,7 @@ export function VolatilityGauge() {
         ? 'bg-yellow-500'
         : s > 20
           ? 'bg-blue-500'
-          : 'bg-gray-500';
+          : 'bg-green-500';
   const label =
     s > 60 ? 'HIGH' : s > 40 ? 'ELEVATED' : s > 20 ? 'NORMAL' : 'LOW';
   const textColor =
@@ -40,7 +42,7 @@ export function VolatilityGauge() {
         ? 'text-yellow-400'
         : s > 20
           ? 'text-blue-400'
-          : 'text-gray-400';
+          : 'text-green-400';
 
   if (!loaded) {
     return (
@@ -67,6 +69,12 @@ export function VolatilityGauge() {
         <span>0</span>
         <span className="font-mono">{s.toFixed(1)}</span>
         <span>100</span>
+      </div>
+      <div className="mt-2 text-xs text-gray-500 flex justify-between">
+        <span>Updates: {updateCount}</span>
+        <span className={score > 0 ? 'text-yellow-400' : 'text-green-400'}>
+          {score === 0 ? '✓ Stable' : score < 20 ? 'Low volatility' : 'Active'}
+        </span>
       </div>
     </div>
   );

@@ -41,7 +41,8 @@ class PriceAggregator:
         self._client: httpx.AsyncClient | None = None
         self._redis = redis_cache
         self._ws = ws_stream
-        self._mode = "rest"  # will be set to "ws" if WS starts ok
+        self._mode = "rest"
+        self._poll_interval = 1.0
 
     @property
     def tickers(self) -> dict[str, BidAsk]:
@@ -103,7 +104,7 @@ class PriceAggregator:
 
     async def start(self, interval_sec: float = 1.0) -> None:
         """
-        Start price feed. Tries WebSocket first, falls back to REST.
+        Start price feed. Uses REST polling (more reliable than WebSocket).
         """
         self._running = True
 
@@ -115,30 +116,9 @@ class PriceAggregator:
                 self._update_count += 1
                 logger.info(f"Restored {len(cached)} tickers from Redis cache")
 
-        # Try WebSocket mode
-        if self._ws:
-            try:
-                self._ws.on_update(self._on_ws_update)
-                ws_task = asyncio.create_task(self._ws.start())
-                # Give WS a moment to connect and load snapshot
-                await asyncio.sleep(3)
-                if self._ws.connected and len(self._ws.tickers) > 0:
-                    self._mode = "ws"
-                    self._tickers = self._ws.tickers
-                    logger.info(f"Price feed: WebSocket mode ({len(self._tickers)} pairs)")
-                    # WS runs on its own task, keep aggregator alive
-                    self._ws_task = ws_task
-                    # Also run a periodic Redis persist loop
-                    await self._ws_persist_loop()
-                    return
-                else:
-                    ws_task.cancel()
-                    logger.warning("WS didn't connect, falling back to REST")
-            except Exception as e:
-                logger.warning(f"WS start failed: {e}, falling back to REST")
-
-        # REST polling mode
+        # REST polling mode - more reliable
         self._mode = "rest"
+        self._poll_interval = interval_sec
         logger.info(f"Price feed: REST polling mode (interval: {interval_sec}s)")
 
         while self._running:
@@ -147,12 +127,15 @@ class PriceAggregator:
                 if tickers:
                     for cb in self._callbacks:
                         try:
-                            cb(tickers)
+                            if asyncio.iscoroutinefunction(cb):
+                                await cb(self._tickers)
+                            else:
+                                cb(self._tickers)
                         except Exception as e:
                             logger.error(f"Callback error: {e}")
             except Exception as e:
                 logger.error(f"Poll error: {e}")
-            await asyncio.sleep(interval_sec)
+            await asyncio.sleep(self._poll_interval)
 
     async def _ws_persist_loop(self) -> None:
         """Periodically persist WS tickers to Redis and fire callbacks."""
@@ -160,6 +143,12 @@ class PriceAggregator:
             try:
                 self._tickers = self._ws.tickers
                 self._update_count = self._ws.update_count
+
+                # Debug: log every 10 iterations
+                if self._update_count % 50 == 0 and self._update_count > 0:
+                    logger.info(
+                        f"WS persist: {self._update_count} updates, {len(self._tickers)} tickers"
+                    )
 
                 # Fire callbacks
                 for cb in self._callbacks:
