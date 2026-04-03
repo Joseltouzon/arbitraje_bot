@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from app.config import settings
+from app.config import BINANCE_FEE_RATE, DEFAULT_SLIPPAGE_PCT, settings
 from app.core.calculator import calculate_cycle_profit
 from app.core.graph import build_currency_graph, find_all_cycles_optimized
 from app.models.primitives import BidAsk
@@ -108,8 +108,8 @@ class CycleScanner:
                 result = calculate_cycle_profit(
                     initial_amount=self._trade_amount,
                     rates=rates_to_use,
-                    fee_rate=0.001,
-                    slippage_pct=0.001,
+                    fee_rate=BINANCE_FEE_RATE,
+                    slippage_pct=DEFAULT_SLIPPAGE_PCT,
                 )
                 cycle["calculated"] = result
                 cycle["timestamp"] = datetime.now().isoformat()

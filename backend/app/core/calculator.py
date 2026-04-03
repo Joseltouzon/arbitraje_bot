@@ -24,6 +24,18 @@ def calculate_cycle_profit(
     Returns:
         dict with profit breakdown
     """
+    if initial_amount <= 0 or not rates:
+        return {
+            "initial_amount": 0,
+            "final_amount": 0,
+            "gross_profit": 0,
+            "net_profit": 0,
+            "net_profit_pct": 0,
+            "total_fees": 0,
+            "total_slippage": 0,
+            "trade_count": len(rates) if rates else 0,
+        }
+
     current = initial_amount
     total_fees_paid = 0.0
     total_slippage_cost = 0.0

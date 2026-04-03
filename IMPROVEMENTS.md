@@ -29,9 +29,17 @@
 | 23 | Circuit breaker (5 errores → pausa 60s) | Alto | `c42d34d` |
 | 24 | Retry logic con exponential backoff | Medio | `c42d34d` |
 | 25 | Async callbacks en WebSocket (no bloquean flujo) | Medio | `c42d34d` |
-| 26 | Optimización Bellman-Ford (4x más rápido, 1 sola pass) | Alto | — |
-| 27 | Reporting por moneda en scan (USDT/BTC/ETH/BNB stats) | Medio | — |
+| 26 | Optimización Bellman-Ford (4x más rápido, 1 sola pass) | Alto | `a39b8a7` |
+| 27 | Reporting por moneda en scan (USDT/BTC/ETH/BNB stats) | Medio | `a39b8a7` |
 | 28 | Thresholds ajustados (profit 0.15%, liquidity 500) | Medio | — |
+| 29 | REST polling como modo principal (confiable) + frontend WS improvements | Alto | `0fa79c0` |
+| 30 | Fix onerror duplicado en useWebSocket.ts | Alto | — |
+| 31 | Fix division by zero en calculator.py | Alto | — |
+| 32 | Validación API routes con Query constraints | Medio | — |
+| 33 | Circular buffer trades (max 1000 en memoria) | Medio | — |
+| 34 | Fee rate centralizado en config.py | Medio | — |
+| 35 | Circuit breaker race condition fix | Medio | — |
+| 36 | Loading state en frontend App.tsx | Bajo | — |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 

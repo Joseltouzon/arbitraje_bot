@@ -47,11 +47,6 @@ export function useWebSocket() {
         try { ws.send('ping'); } catch { /* ignore */ }
       };
 
-      ws.onerror = (error) => {
-        console.log('WebSocket error:', error);
-        addLog('error', 'WS connection error');
-      };
-
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -94,6 +89,7 @@ export function useWebSocket() {
       };
 
       ws.onerror = () => {
+        addLog('error', 'WS connection error');
         ws.close();
       };
 

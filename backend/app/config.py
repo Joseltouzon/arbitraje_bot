@@ -1,5 +1,10 @@
 from pydantic_settings import BaseSettings
 
+# Trading constants
+BINANCE_FEE_RATE = 0.001  # 0.1% taker fee
+DEFAULT_SLIPPAGE_PCT = 0.001  # 0.1% estimated slippage
+MAX_TRADES_IN_MEMORY = 1000  # Circular buffer size
+
 
 class Settings(BaseSettings):
     # Database

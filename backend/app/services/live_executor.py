@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from app.config import settings
+from app.config import MAX_TRADES_IN_MEMORY, settings
 from app.core.risk import RiskManager
 from app.exchanges.binance import BinanceAdapter
 from app.models.primitives import BidAsk, TradeResult
@@ -73,7 +74,7 @@ class LiveExecutor:
         self._enabled = False
         self._confirmed = False
         self.trade_count = 0
-        self.trades: list[LiveTrade] = []
+        self.trades: deque[LiveTrade] = deque(maxlen=MAX_TRADES_IN_MEMORY)  # Circular buffer
         self.total_profit = Decimal("0")
         self.total_fees = Decimal("0")
         self._last_balance_check: dict[str, Decimal] = {}
@@ -83,6 +84,7 @@ class LiveExecutor:
         self._circuit_broken = False
         self._circuit_breaker_threshold = 5
         self._circuit_reset_timeout = 60  # seconds
+        self._circuit_reset_task: asyncio.Task | None = None  # Track reset task
 
         # Retry settings
         self._max_retries = 3
@@ -364,7 +366,9 @@ class LiveExecutor:
                     f"CIRCUIT BREAKER TRIPPED after {self._consecutive_errors} consecutive errors. "
                     f"Pausing trading for {self._circuit_reset_timeout}s"
                 )
-                asyncio.create_task(self._reset_circuit_breaker())
+                # Only start reset task if none is running
+                if self._circuit_reset_task is None or self._circuit_reset_task.done():
+                    self._circuit_reset_task = asyncio.create_task(self._reset_circuit_breaker())
 
         trade = LiveTrade(
             id=self.trade_count,
@@ -601,7 +605,7 @@ class LiveExecutor:
 
     def get_recent_trades(self, limit: int = 20) -> list[dict]:
         """Get recent live trades."""
-        recent = self.trades[-limit:]
+        recent = list(self.trades)[-limit:]
         return [
             {
                 "id": t.id,

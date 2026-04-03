@@ -83,6 +83,7 @@ interface LiveTrade {
 function App() {
   const { cycles, spotFutures, connected, logs } = useWebSocket();
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [loading, setLoading] = useState(true);
   const [paperStats, setPaperStats] = useState<PaperStats | null>(null);
   const [paperTrades, setPaperTrades] = useState<PaperTrade[]>([]);
   const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
@@ -102,8 +103,9 @@ function App() {
         setPaperTrades(paperTradesRes.trades || []);
         setLiveStats(liveRes);
         setLiveTrades(liveTradesRes.trades || []);
+        setLoading(false);
       } catch {
-        // ignore
+        setLoading(false);
       }
     };
     loadData();
@@ -130,6 +132,15 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
       <Header connected={connected} />
+
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <div className="flex items-center gap-3 text-gray-400">
+            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <span>Loading...</span>
+          </div>
+        </div>
+      )}
 
       <div className="flex border-b border-gray-800 px-4">
         {tabs.map((t) => (
