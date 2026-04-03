@@ -24,6 +24,14 @@
 | 18 | Spot-Futures: selección automática de mejor oportunidad + notificación solo al ejecutar | Alto | — |
 | 19 | Spot-Futures: step sizes por símbolo para spot y futures | Medio | — |
 | 20 | Funding rate carry strategy reemplaza premium/discount | Alto | — |
+| 21 | Slippage/fee order corregido (fee primero, luego slippage) | Alto | `c42d34d` |
+| 22 | Idempotency keys en órdenes (previene duplicados) | Alto | `c42d34d` |
+| 23 | Circuit breaker (5 errores → pausa 60s) | Alto | `c42d34d` |
+| 24 | Retry logic con exponential backoff | Medio | `c42d34d` |
+| 25 | Async callbacks en WebSocket (no bloquean flujo) | Medio | `c42d34d` |
+| 26 | Optimización Bellman-Ford (4x más rápido, 1 sola pass) | Alto | — |
+| 27 | Reporting por moneda en scan (USDT/BTC/ETH/BNB stats) | Medio | — |
+| 28 | Thresholds ajustados (profit 0.15%, liquidity 500) | Medio | — |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 
@@ -37,6 +45,28 @@
 ### Modos de arbitraje
 1. **Triangular** (USDT → X → Y → USDT) — detecta ciclos de 3 pares dentro de Binance
 2. **Spot-Futures** — detecta premium entre precio spot y futuros USDⓈ-M
+
+### Triangular: flujo de detección
+```
+Scanner (cada 500ms)
+  └→ Recibe tickers de WebSocket
+  └→ Construye graph de currencies (1 sola vez)
+  └→ DFS triangular para cada start_currency (USDT, BTC, ETH, BNB)
+  └→ Bellman-Ford para ciclos 4-legs
+  └→ Enriquece con profit calculado (fee + slippage estimados)
+  └→ Ordena por profit DESC
+  └→ Si profit > threshold → activa ejecución
+```
+
+**Stats por moneda en logs:**
+```
+Scan #1: 5 cycles | best: [...]+0.32% | USDT:2(+0.32%) BTC:1(+0.18%) ETH:2(+0.25%)
+```
+
+**Nota:** El profit es **estimado**. El real puede variar por:
+- Spread se cierra antes de ejecución (~100-500ms)
+- Slippage real > estimado (0.1%)
+- Fees reales por VIP level
 
 ### Feed de precios
 - **Primario**: WebSocket `!bookTicker` stream (latencia ~ms)

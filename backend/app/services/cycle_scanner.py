@@ -7,7 +7,7 @@ from typing import Any
 
 from app.config import settings
 from app.core.calculator import calculate_cycle_profit
-from app.core.graph import bellman_ford_cycles, build_currency_graph
+from app.core.graph import build_currency_graph, find_all_cycles_optimized
 from app.models.primitives import BidAsk
 from app.services.price_aggregator import PriceAggregator
 from app.utils.logger import get_logger
@@ -34,6 +34,7 @@ class CycleScanner:
         self._scan_errors = 0
         self._trade_amount: float = settings.trade_amount_usdt
         self._last_balance_fetch: datetime | None = None
+        self._currency_stats: dict[str, dict] = {}
 
     @property
     def cycles(self) -> list[dict[str, Any]]:
@@ -78,66 +79,65 @@ class CycleScanner:
             min_liquidity=settings.min_liquidity_usdt,
         )
 
-        # Scan from each start currency
+        # Find all cycles in ONE pass (optimized)
+        raw_cycles, currency_stats = find_all_cycles_optimized(
+            graph=graph,
+            metadata=metadata,
+            start_currencies=settings.start_currency_list,
+            min_profit_pct=settings.min_profit_threshold_pct,
+            max_cycle_length=settings.max_cycle_length,
+        )
+
+        # Enrich cycles with profit calculations
         all_cycles: list[dict[str, Any]] = []
-        seen: set[tuple[str, ...]] = set()
+        for cycle in raw_cycles:
+            try:
+                # Apply realistic rates (buy at ask, sell at bid)
+                realistic_rates = []
+                for leg in cycle["legs"]:
+                    if leg["side"] == "buy":
+                        ask_p = leg["ask"]
+                        realistic_rates.append(1 / ask_p if ask_p > 0 else leg["rate"])
+                    else:
+                        bid_p = leg["bid"]
+                        realistic_rates.append(bid_p if bid_p > 0 else leg["rate"])
 
-        for start_cur in settings.start_currency_list:
-            if start_cur not in graph:
+                # Enrich with profit calculations
+                fallback = [leg["rate"] for leg in cycle["legs"]]
+                rates_to_use = realistic_rates if realistic_rates else fallback
+                result = calculate_cycle_profit(
+                    initial_amount=self._trade_amount,
+                    rates=rates_to_use,
+                    fee_rate=0.001,
+                    slippage_pct=0.001,
+                )
+                cycle["calculated"] = result
+                cycle["timestamp"] = datetime.now().isoformat()
+                all_cycles.append(cycle)
+            except Exception as e:
+                logger.error(f"Error processing cycle {cycle}: {e}")
                 continue
-
-            cycles = bellman_ford_cycles(
-                graph=graph,
-                metadata=metadata,
-                start_currency=start_cur,
-                min_profit_pct=settings.min_profit_threshold_pct,
-                max_cycle_length=settings.max_cycle_length,
-            )
-            for cycle in cycles:
-                try:
-                    key = tuple(cycle["currencies"])
-                    if key not in seen:
-                        seen.add(key)
-
-                        # Apply realistic rates (buy at ask, sell at bid)
-                        realistic_rates = []
-                        for leg in cycle["legs"]:
-                            if leg["side"] == "buy":
-                                ask_p = leg["ask"]
-                                realistic_rates.append(1 / ask_p if ask_p > 0 else leg["rate"])
-                            else:
-                                bid_p = leg["bid"]
-                                realistic_rates.append(bid_p if bid_p > 0 else leg["rate"])
-
-                        # Enrich with profit calculations
-                        fallback = [leg["rate"] for leg in cycle["legs"]]
-                        rates_to_use = realistic_rates if realistic_rates else fallback
-                        result = calculate_cycle_profit(
-                            initial_amount=self._trade_amount,
-                            rates=rates_to_use,
-                            fee_rate=0.001,
-                            slippage_pct=0.001,
-                        )
-                        cycle["calculated"] = result
-                        cycle["timestamp"] = datetime.now().isoformat()
-                        cycle["start_currency"] = start_cur
-                        all_cycles.append(cycle)
-                except Exception as e:
-                    logger.error(f"Error processing cycle {cycle}: {e}")
-                    continue
 
         # Sort by profit descending
         all_cycles.sort(key=lambda c: c["net_profit_pct"], reverse=True)
 
         self._cycles = all_cycles
+        self._currency_stats = currency_stats
         self._scan_count += 1
         self._last_scan_time = datetime.now()
+
+        # Build stats string by currency
+        stats_parts = []
+        for cur, s in currency_stats.items():
+            if s["cycles"] > 0:
+                stats_parts.append(f"{cur}:{s['cycles']}(+{s['best_profit']:.2f}%)")
+        stats_str = " | ".join(stats_parts) if stats_parts else "no cycles"
 
         if all_cycles:
             top = all_cycles[0]
             logger.info(
                 f"Scan #{self._scan_count}: {len(all_cycles)} cycles | "
-                f"best: {top['currencies']} +{top['net_profit_pct']:.3f}%"
+                f"best: {top['currencies']} +{top['net_profit_pct']:.3f}% | {stats_str}"
             )
             for cb in self._callbacks:
                 try:
@@ -191,6 +191,7 @@ class CycleScanner:
             "top_profit": self._cycles[0]["net_profit_pct"] if self._cycles else 0,
             "tickers_loaded": len(self._tickers),
             "start_currencies": settings.start_currency_list,
+            "currency_stats": self._currency_stats,
             "trade_amount": self._trade_amount,
         }
 

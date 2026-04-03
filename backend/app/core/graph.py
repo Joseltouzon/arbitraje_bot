@@ -227,6 +227,101 @@ def bellman_ford_cycles(
     return cycles
 
 
+def find_all_cycles_optimized(
+    graph: dict[str, dict[str, float]],
+    metadata: dict[str, dict[str, dict]],
+    start_currencies: list[str],
+    min_profit_pct: float = 0.2,
+    max_cycle_length: int = 4,
+) -> tuple[list[dict[str, Any]], dict[str, dict]]:
+    """
+    Optimized cycle finding - runs Bellman-Ford once and extracts cycles for all start currencies.
+
+    Returns:
+        - List of all profitable cycles
+        - Stats dict with cycles per start currency
+    """
+    if not start_currencies:
+        return [], {}
+
+    currencies = list(graph.keys())
+    n = len(currencies)
+
+    if n < 3:
+        return [], {}
+
+    # Build -log(weight) graph ONCE
+    log_graph: dict[str, dict[str, float]] = {}
+    for src in graph:
+        log_graph[src] = {}
+        for dst in graph[src]:
+            rate = graph[src][dst]
+            if rate > 0:
+                log_graph[src][dst] = -math.log(rate)
+
+    fee_rate = 0.001
+    all_cycles: list[dict[str, Any]] = []
+    seen_cycles: set[tuple[str, ...]] = set()
+    stats: dict[str, dict] = {cur: {"cycles": 0, "best_profit": 0} for cur in start_currencies}
+
+    # Run DFS for triangular cycles once per currency
+    for start_currency in start_currencies:
+        if start_currency not in graph:
+            continue
+
+        triangular = _find_triangular_cycles_dfs(
+            graph=graph,
+            metadata=metadata,
+            start_currency=start_currency,
+            min_profit_pct=min_profit_pct,
+            fee_rate=fee_rate,
+        )
+
+        for cycle in triangular:
+            key = tuple(cycle["currencies"])
+            if key not in seen_cycles:
+                seen_cycles.add(key)
+                cycle["start_currency"] = start_currency
+                all_cycles.append(cycle)
+
+                stats[start_currency]["cycles"] += 1
+                if cycle["net_profit_pct"] > stats[start_currency]["best_profit"]:
+                    stats[start_currency]["best_profit"] = cycle["net_profit_pct"]
+
+    # Also run Bellman-Ford once (from first currency) to find non-triangular cycles
+    if start_currencies:
+        first_currency = start_currencies[0]
+        if first_currency in graph:
+            bf_cycles = bellman_ford_cycles(
+                graph=graph,
+                metadata=metadata,
+                start_currency=first_currency,
+                min_profit_pct=min_profit_pct,
+                max_cycle_length=max_cycle_length,
+            )
+
+            for cycle in bf_cycles:
+                key = tuple(cycle["currencies"])
+                if key not in seen_cycles:
+                    seen_cycles.add(key)
+                    cycle["start_currency"] = first_currency
+                    all_cycles.append(cycle)
+
+                    stats[first_currency]["cycles"] += 1
+                    if cycle["net_profit_pct"] > stats[first_currency]["best_profit"]:
+                        stats[first_currency]["best_profit"] = cycle["net_profit_pct"]
+
+    # Sort all cycles by profit
+    all_cycles.sort(key=lambda c: c["net_profit_pct"], reverse=True)
+
+    logger.info(f"Found {len(all_cycles)} total cycles across {start_currencies}")
+    for cur, s in stats.items():
+        if s["cycles"] > 0:
+            logger.info(f"  {cur}: {s['cycles']} cycles, best: {s['best_profit']:.4f}%")
+
+    return all_cycles, stats
+
+
 def _extract_cycles(
     cycle_nodes: set[str],
     pred: dict[str, str | None],
