@@ -154,11 +154,22 @@ class BinanceWsStream:
 
         # Notify callbacks every 50 updates (batch for performance)
         if self._update_count % 50 == 0:
+            # Schedule callbacks as tasks to avoid blocking
             for cb in self._callbacks:
                 try:
-                    cb(self._tickers)
+                    if asyncio.iscoroutinefunction(cb):
+                        asyncio.create_task(self._safe_callback(cb, self._tickers))
+                    else:
+                        cb(self._tickers)
                 except Exception as e:
                     logger.error(f"WS callback error: {e}")
+
+    async def _safe_callback(self, cb: PriceCallback, tickers: dict[str, BidAsk]) -> None:
+        """Safely execute async callback."""
+        try:
+            await cb(tickers)
+        except Exception as e:
+            logger.error(f"WS async callback error: {e}")
 
     def stop(self) -> None:
         self._running = False

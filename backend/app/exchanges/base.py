@@ -30,8 +30,10 @@ class ExchangeAdapter(ABC):
         ...
 
     @abstractmethod
-    async def create_market_order(self, symbol: str, side: str, quantity: Decimal) -> TradeResult:
-        """Place a market order."""
+    async def create_market_order(
+        self, symbol: str, side: str, quantity: Decimal, client_order_id: str | None = None
+    ) -> TradeResult:
+        """Place a market order with optional idempotency key."""
         ...
 
     @abstractmethod

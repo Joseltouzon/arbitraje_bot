@@ -111,19 +111,23 @@ class BinanceAdapter(ExchangeAdapter):
                 return Decimal(balance["free"])
         return Decimal("0")
 
-    async def create_market_order(self, symbol: str, side: str, quantity: Decimal) -> TradeResult:
+    async def create_market_order(
+        self, symbol: str, side: str, quantity: Decimal, client_order_id: str | None = None
+    ) -> TradeResult:
         """POST /api/v3/order (market) - requires API key + secret"""
         if not self.api_key or not self.api_secret:
             raise ValueError("API key and secret required for trading")
 
-        params = self._sign(
-            {
-                "symbol": symbol,
-                "side": side.upper(),
-                "type": "MARKET",
-                "quantity": str(quantity),
-            }
-        )
+        params: dict = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": "MARKET",
+            "quantity": str(quantity),
+        }
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        params = self._sign(params)
         resp = await self.client.post("/api/v3/order", params=params)
         resp.raise_for_status()
         data = resp.json()
@@ -152,22 +156,29 @@ class BinanceAdapter(ExchangeAdapter):
         return self.FEE_RATE
 
     async def create_limit_order(
-        self, symbol: str, side: str, quantity: Decimal, price: Decimal
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        client_order_id: str | None = None,
     ) -> TradeResult:
         """POST /api/v3/order (LIMIT) - place a limit order."""
         if not self.api_key or not self.api_secret:
             raise ValueError("API key and secret required for trading")
 
-        params = self._sign(
-            {
-                "symbol": symbol,
-                "side": side.upper(),
-                "type": "LIMIT",
-                "timeInForce": "GTC",
-                "quantity": str(quantity),
-                "price": str(price),
-            }
-        )
+        params: dict = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": "LIMIT",
+            "timeInForce": "GTC",
+            "quantity": str(quantity),
+            "price": str(price),
+        }
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        params = self._sign(params)
         resp = await self.client.post("/api/v3/order", params=params)
         resp.raise_for_status()
         data = resp.json()

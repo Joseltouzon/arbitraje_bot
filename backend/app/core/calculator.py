@@ -29,16 +29,17 @@ def calculate_cycle_profit(
     total_slippage_cost = 0.0
 
     for rate in rates:
-        # Apply slippage: reduce effective rate
-        effective_rate = rate * (1 - slippage_pct)
-
-        # Apply fee: reduce amount after trade
-        before_fee = current * effective_rate
+        # Apply fee first: reduce amount after trade
+        before_fee = current * rate
         fee = before_fee * fee_rate
         current = before_fee - fee
 
+        # Apply slippage: reduce final amount
+        slippage_cost = current * slippage_pct
+        current = current - slippage_cost
+
         total_fees_paid += fee
-        total_slippage_cost += current * slippage_pct
+        total_slippage_cost += slippage_cost
 
     final_amount = current
     gross_profit = final_amount - initial_amount

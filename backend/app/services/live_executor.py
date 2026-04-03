@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -77,6 +78,16 @@ class LiveExecutor:
         self.total_fees = Decimal("0")
         self._last_balance_check: dict[str, Decimal] = {}
 
+        # Circuit breaker
+        self._consecutive_errors = 0
+        self._circuit_broken = False
+        self._circuit_breaker_threshold = 5
+        self._circuit_reset_timeout = 60  # seconds
+
+        # Retry settings
+        self._max_retries = 3
+        self._base_delay = 0.5  # seconds
+
     @property
     def enabled(self) -> bool:
         return self._enabled and self._confirmed
@@ -139,6 +150,30 @@ class LiveExecutor:
             logger.error(f"Balance check failed: {e}")
             return False
 
+    async def _reset_circuit_breaker(self) -> None:
+        """Reset circuit breaker after cooldown period."""
+        await asyncio.sleep(self._circuit_reset_timeout)
+        self._circuit_broken = False
+        self._consecutive_errors = 0
+        logger.info("Circuit breaker reset - trading resumed")
+
+    async def _retry_with_backoff(self, func, *args, max_retries: int | None = None, **kwargs):
+        """Execute function with exponential backoff retry."""
+        retries = max_retries or self._max_retries
+        last_error = None
+
+        for attempt in range(retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt < retries:
+                    delay = self._base_delay * (2**attempt)
+                    logger.warning(f"Retry {attempt + 1}/{retries} after {delay}s: {e}")
+                    await asyncio.sleep(delay)
+
+        raise last_error
+
     async def execute_cycle(
         self,
         cycle: dict[str, Any],
@@ -149,8 +184,14 @@ class LiveExecutor:
 
         Uses LIMIT orders first (less slippage), with fallback to MARKET
         if limit order doesn't fill within timeout.
+        Includes circuit breaker and retry logic.
         """
         if not self.enabled:
+            return None
+
+        # Circuit breaker check
+        if self._circuit_broken:
+            logger.warning("Circuit breaker tripped - skipping execution")
             return None
 
         can_trade, reason = self.risk.can_trade()
@@ -177,6 +218,7 @@ class LiveExecutor:
         status = "completed"
 
         # Pre-validate all legs with order book
+        remaining_balance = initial_balance
         for leg in legs:
             pair = leg["pair"]
             if pair not in tickers:
@@ -190,17 +232,15 @@ class LiveExecutor:
                 logger.warning(f"SKIP: {pair} spread too high ({spread:.2f}%)")
                 return None
 
-            # Check order book depth
+            # Check order book depth using remaining balance
             try:
                 orderbook = await self.exchange.get_orderbook(pair, depth=5)
                 if leg["side"] == "buy":
-                    # Check if ask side has enough liquidity
                     available = sum(level.quantity for level in orderbook.asks[:3])
-                    needed = float(initial_balance) / ticker.ask / 3
+                    needed = float(remaining_balance) / float(ticker.ask)
                 else:
-                    # Check if bid side has enough liquidity
                     available = sum(level.quantity for level in orderbook.bids[:3])
-                    needed = float(initial_balance) / ticker.bid / 3
+                    needed = float(remaining_balance) / float(ticker.bid)
 
                 if available < needed:
                     logger.warning(
@@ -210,6 +250,9 @@ class LiveExecutor:
             except Exception as e:
                 logger.warning(f"SKIP: {pair} orderbook check failed: {e}")
                 return None
+
+            # Update remaining balance estimate for next leg
+            remaining_balance = remaining_balance * Decimal("0.999")
 
         try:
             for leg in legs:
@@ -310,6 +353,19 @@ class LiveExecutor:
         # Update risk manager
         self.risk.record_trade(float(profit))
 
+        # Circuit breaker logic
+        if status == "completed":
+            self._consecutive_errors = 0
+        else:
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= self._circuit_breaker_threshold:
+                self._circuit_broken = True
+                logger.error(
+                    f"CIRCUIT BREAKER TRIPPED after {self._consecutive_errors} consecutive errors. "
+                    f"Pausing trading for {self._circuit_reset_timeout}s"
+                )
+                asyncio.create_task(self._reset_circuit_breaker())
+
         trade = LiveTrade(
             id=self.trade_count,
             currencies=cycle["currencies"],
@@ -359,10 +415,13 @@ class LiveExecutor:
 
         Limit orders have maker fee (0.1%) vs taker (0.1% on Binance),
         but less slippage = net better execution.
+        Uses idempotency keys to prevent duplicate orders.
         """
         ticker = tickers.get(pair)
         if not ticker:
             raise ValueError(f"No ticker for {pair}")
+
+        client_order_id = f"arb_{uuid.uuid4().hex[:16]}"
 
         # Set limit price at best available
         limit_price = Decimal(str(ticker.bid)) if side == "BUY" else Decimal(str(ticker.ask))
@@ -416,8 +475,10 @@ class LiveExecutor:
         except Exception as e:
             logger.warning(f"Limit order failed: {e}, trying MARKET")
 
-        # Fallback to market order
-        return await self.exchange.create_market_order(symbol=pair, side=side, quantity=quantity)
+        # Fallback to market order with idempotency key
+        return await self.exchange.create_market_order(
+            symbol=pair, side=side, quantity=quantity, client_order_id=client_order_id
+        )
 
     async def _calculate_quantity(
         self,
@@ -526,6 +587,11 @@ class LiveExecutor:
             "total_profit_usdt": float(self.total_profit),
             "total_fees_usdt": float(self.total_fees),
             "net_profit_usdt": float(self.total_profit),
+            "circuit_breaker": {
+                "broken": self._circuit_broken,
+                "consecutive_errors": self._consecutive_errors,
+                "threshold": self._circuit_breaker_threshold,
+            },
             "risk": {
                 "paused": self.risk.is_paused,
                 "consecutive_losses": self.risk.consecutive_losses,
