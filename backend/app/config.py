@@ -35,6 +35,8 @@ class Settings(BaseSettings):
 
     @property
     def start_currency_list(self) -> list[str]:
+        if isinstance(self.start_currencies, list):
+            return [str(c).strip() for c in self.start_currencies if c]
         return [c.strip() for c in self.start_currencies.split(",") if c.strip()]
 
 

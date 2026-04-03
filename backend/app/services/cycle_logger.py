@@ -81,8 +81,10 @@ class CycleLogger:
                 return [
                     {
                         "id": r.id,
-                        "currencies": r.currencies.split(","),
-                        "pairs": r.pairs.split(","),
+                        "currencies": r.currencies.split(",")
+                        if isinstance(r.currencies, str)
+                        else r.currencies,
+                        "pairs": r.pairs.split(",") if isinstance(r.pairs, str) else r.pairs,
                         "net_profit_pct": r.net_profit_pct,
                         "net_profit_usdt": r.net_profit_usdt,
                         "detected_at": r.detected_at.isoformat(),
@@ -106,7 +108,9 @@ class CycleLogger:
                     {
                         "id": r.id,
                         "mode": r.mode,
-                        "currencies": r.currencies.split(","),
+                        "currencies": r.currencies.split(",")
+                        if isinstance(r.currencies, str)
+                        else r.currencies,
                         "profit_usdt": r.profit_usdt,
                         "profit_pct": r.profit_pct,
                         "status": r.status,

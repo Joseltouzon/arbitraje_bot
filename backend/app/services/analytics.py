@@ -118,7 +118,9 @@ class Analytics:
                 return [
                     {
                         "id": r.id,
-                        "currencies": r.currencies.split(","),
+                        "currencies": r.currencies.split(",")
+                        if isinstance(r.currencies, str)
+                        else r.currencies,
                         "net_profit_pct": r.net_profit_pct,
                         "net_profit_usdt": r.net_profit_usdt,
                         "detected_at": r.detected_at.isoformat(),

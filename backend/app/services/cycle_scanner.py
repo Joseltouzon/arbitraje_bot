@@ -93,35 +93,38 @@ class CycleScanner:
                 min_profit_pct=settings.min_profit_threshold_pct,
                 max_cycle_length=settings.max_cycle_length,
             )
-
             for cycle in cycles:
-                key = tuple(cycle["currencies"])
-                if key not in seen:
-                    seen.add(key)
+                try:
+                    key = tuple(cycle["currencies"])
+                    if key not in seen:
+                        seen.add(key)
 
-                    # Apply realistic rates (buy at ask, sell at bid)
-                    realistic_rates = []
-                    for leg in cycle["legs"]:
-                        if leg["side"] == "buy":
-                            ask_p = leg["ask"]
-                            realistic_rates.append(1 / ask_p if ask_p > 0 else leg["rate"])
-                        else:
-                            bid_p = leg["bid"]
-                            realistic_rates.append(bid_p if bid_p > 0 else leg["rate"])
+                        # Apply realistic rates (buy at ask, sell at bid)
+                        realistic_rates = []
+                        for leg in cycle["legs"]:
+                            if leg["side"] == "buy":
+                                ask_p = leg["ask"]
+                                realistic_rates.append(1 / ask_p if ask_p > 0 else leg["rate"])
+                            else:
+                                bid_p = leg["bid"]
+                                realistic_rates.append(bid_p if bid_p > 0 else leg["rate"])
 
-                    # Enrich with profit calculations
-                    fallback = [leg["rate"] for leg in cycle["legs"]]
-                    rates_to_use = realistic_rates if realistic_rates else fallback
-                    result = calculate_cycle_profit(
-                        initial_amount=self._trade_amount,
-                        rates=rates_to_use,
-                        fee_rate=0.001,
-                        slippage_pct=0.001,
-                    )
-                    cycle["calculated"] = result
-                    cycle["timestamp"] = datetime.now().isoformat()
-                    cycle["start_currency"] = start_cur
-                    all_cycles.append(cycle)
+                        # Enrich with profit calculations
+                        fallback = [leg["rate"] for leg in cycle["legs"]]
+                        rates_to_use = realistic_rates if realistic_rates else fallback
+                        result = calculate_cycle_profit(
+                            initial_amount=self._trade_amount,
+                            rates=rates_to_use,
+                            fee_rate=0.001,
+                            slippage_pct=0.001,
+                        )
+                        cycle["calculated"] = result
+                        cycle["timestamp"] = datetime.now().isoformat()
+                        cycle["start_currency"] = start_cur
+                        all_cycles.append(cycle)
+                except Exception as e:
+                    logger.error(f"Error processing cycle {cycle}: {e}")
+                    continue
 
         # Sort by profit descending
         all_cycles.sort(key=lambda c: c["net_profit_pct"], reverse=True)
