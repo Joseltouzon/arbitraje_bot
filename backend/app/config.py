@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 # Trading constants
 BINANCE_FEE_RATE = 0.001  # 0.1% taker fee
-DEFAULT_SLIPPAGE_PCT = 0.001  # 0.1% estimated slippage
+DEFAULT_SLIPPAGE_PCT = 0.0001  # 0.01% estimated slippage (realistic for $150 orders)
 MAX_TRADES_IN_MEMORY = 1000  # Circular buffer size
 
 
@@ -20,12 +20,12 @@ class Settings(BaseSettings):
     auto_trade: bool = False
 
     # Arbitrage
-    min_profit_threshold_pct: float = 0.2
+    min_profit_threshold_pct: float = 0.05
     start_currencies: str = "USDT,BTC,ETH,BNB"
     max_cycle_length: int = 4
     poll_interval_ms: int = 500
     trade_amount_usdt: float = 150.0
-    min_liquidity_usdt: float = 5000.0
+    min_liquidity_usdt: float = 500.0
 
     # Risk
     max_trades_per_hour: int = 20
