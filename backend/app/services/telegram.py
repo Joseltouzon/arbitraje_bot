@@ -142,26 +142,6 @@ class TelegramNotifier:
             f"Consecutive errors: {consecutive_errors}"
         )
 
-    async def notify_alert(
-        self, alert_type: str, message: str, details: dict[str, Any] | None = None
-    ) -> bool:
-        """Generic alert notification."""
-        emoji_map = {
-            "error": "🔴",
-            "warning": "⚡",
-            "circuit_breaker": "🔴",
-            "trade_failed": "❌",
-            "trade_success": "✅",
-            "info": "ℹ️",
-        }
-        emoji = emoji_map.get(alert_type, "📢")
-        title = alert_type.replace("_", " ").title()
-        msg = f"{emoji} <b>{title}</b>\n{message}"
-        if details:
-            lines = [f"{k}: {v}" for k, v in details.items()]
-            msg += "\n" + "\n".join(lines)
-        return await self.send(msg)
-
     async def notify_summary(self, stats: dict[str, Any]) -> bool:
         """Send periodic summary."""
         msg = (
@@ -314,3 +294,15 @@ class TelegramNotifier:
                 "/pause - Pause live trading\n"
                 "/resume - Resume live trading"
             )
+
+
+# Singleton instance for use in other modules
+_telegram: TelegramNotifier | None = None
+
+
+def get_telegram() -> TelegramNotifier:
+    """Get singleton TelegramNotifier instance."""
+    global _telegram
+    if _telegram is None:
+        _telegram = TelegramNotifier()
+    return _telegram
