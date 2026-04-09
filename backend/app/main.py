@@ -9,6 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
+    alerts_route,
     cycles,
     history,
     live_route,
@@ -311,6 +312,7 @@ app.include_router(history.router, prefix="/api/history", tags=["history"])
 app.include_router(paper_route.router, prefix="/api/paper", tags=["paper-trading"])
 app.include_router(live_route.router, prefix="/api/live", tags=["live-trading"])
 app.include_router(spot_futures_route.router, prefix="/api/spot-futures", tags=["spot-futures"])
+app.include_router(alerts_route.router, prefix="/api/alerts", tags=["alerts"])
 
 
 @app.get("/health")

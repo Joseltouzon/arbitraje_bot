@@ -72,3 +72,19 @@ export interface HistoryCycle {
   net_profit_usdt: number;
   detected_at: string;
 }
+
+export type AlertType = 'error' | 'warning' | 'circuit_breaker' | 'trade_failed' | 'trade_success' | 'info';
+
+export interface Alert {
+  id: number;
+  type: AlertType;
+  message: string;
+  details: Record<string, unknown> | null;
+  timestamp: string;
+}
+
+export interface AlertsResponse {
+  alerts: Alert[];
+  count: Record<AlertType, number>;
+  total: number;
+}

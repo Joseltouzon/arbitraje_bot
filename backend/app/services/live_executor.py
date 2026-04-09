@@ -7,13 +7,14 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from app.config import MAX_TRADES_IN_MEMORY, settings
 from app.core.risk import RiskManager
 from app.exchanges.binance import BinanceAdapter
 from app.models.primitives import BidAsk, TradeResult
+from app.services.alerts import alerts_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -194,11 +195,15 @@ class LiveExecutor:
         # Circuit breaker check
         if self._circuit_broken:
             logger.warning("Circuit breaker tripped - skipping execution")
+            alerts_service.warning(
+                "Circuit breaker active - trades paused", reason="circuit_breaker"
+            )
             return None
 
         can_trade, reason = self.risk.can_trade()
         if not can_trade:
             logger.warning(f"Risk check failed: {reason}")
+            alerts_service.warning(f"Risk blocked trade: {reason}", reason="risk_check")
             return None
 
         legs = cycle.get("legs", [])
@@ -225,6 +230,7 @@ class LiveExecutor:
             pair = leg["pair"]
             if pair not in tickers:
                 logger.warning(f"SKIP: no ticker for {pair}")
+                alerts_service.warning(f"No ticker for {pair}", pair=pair)
                 return None
             ticker = tickers[pair]
 
@@ -232,6 +238,7 @@ class LiveExecutor:
             spread = (ticker.ask - ticker.bid) / ticker.bid * 100 if ticker.bid > 0 else 100
             if spread > 0.5:
                 logger.warning(f"SKIP: {pair} spread too high ({spread:.2f}%)")
+                alerts_service.warning(f"Spread too high for {pair}", pair=pair, spread=spread)
                 return None
 
             # Check order book depth using remaining balance
@@ -248,9 +255,18 @@ class LiveExecutor:
                     logger.warning(
                         f"SKIP: {pair} insufficient depth (need {needed:.4f}, have {available:.4f})"
                     )
+                    alerts_service.warning(
+                        f"Low depth for {pair}",
+                        pair=pair,
+                        needed=needed,
+                        available=available,
+                    )
                     return None
             except Exception as e:
                 logger.warning(f"SKIP: {pair} orderbook check failed: {e}")
+                alerts_service.warning(
+                    f"Orderbook check failed for {pair}", pair=pair, error=str(e)
+                )
                 return None
 
             # Update remaining balance estimate for next leg
@@ -358,13 +374,31 @@ class LiveExecutor:
         # Circuit breaker logic
         if status == "completed":
             self._consecutive_errors = 0
+            alerts_service.trade_success(
+                f"Trade completed: {' → '.join(cycle['currencies'])}",
+                currencies=cycle["currencies"],
+                profit=float(profit),
+                profit_pct=profit_pct,
+                duration_ms=total_duration,
+            )
         else:
             self._consecutive_errors += 1
+            alerts_service.trade_failed(
+                f"Trade {status}: {' → '.join(cycle['currencies'])}",
+                currencies=cycle["currencies"],
+                status=status,
+                consecutive_errors=self._consecutive_errors,
+            )
             if self._consecutive_errors >= self._circuit_breaker_threshold:
                 self._circuit_broken = True
                 logger.error(
                     f"CIRCUIT BREAKER TRIPPED after {self._consecutive_errors} consecutive errors. "
                     f"Pausing trading for {self._circuit_reset_timeout}s"
+                )
+                alerts_service.circuit_breaker(
+                    f"Circuit breaker triggered after {self._consecutive_errors} errors",
+                    consecutive_errors=self._consecutive_errors,
+                    timeout=self._circuit_reset_timeout,
                 )
                 # Only start reset task if none is running
                 if self._circuit_reset_task is None or self._circuit_reset_task.done():
@@ -518,7 +552,7 @@ class LiveExecutor:
                 return Decimal("0")
 
             quantity = available / price
-            quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
+            quantity = quantity.quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
             return quantity
 
         else:
@@ -530,7 +564,7 @@ class LiveExecutor:
 
             balance = await self.exchange.get_balance(base)
             quantity = balance * Decimal("0.99")
-            quantity = quantity.quantize(Decimal("0.00001"), rounding=Decimal.ROUND_DOWN)
+            quantity = quantity.quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
             return quantity
 
     @staticmethod

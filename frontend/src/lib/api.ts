@@ -139,3 +139,17 @@ export async function fetchLiveTrades(limit = 20) {
   const res = await fetch(`${API_BASE}/live/trades?limit=${limit}`);
   return res.json();
 }
+
+// Alerts
+export async function fetchAlerts(limit = 20, type?: string) {
+  const url = type
+    ? `${API_BASE}/alerts/?limit=${limit}&alert_type=${type}`
+    : `${API_BASE}/alerts/?limit=${limit}`;
+  const res = await fetch(url);
+  return res.json();
+}
+
+export async function clearAlerts() {
+  const res = await fetch(`${API_BASE}/alerts/clear`, { method: 'POST' });
+  return res.json();
+}

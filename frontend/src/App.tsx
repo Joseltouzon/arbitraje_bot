@@ -5,6 +5,7 @@ import { StatsCard } from './components/dashboard/StatsCard';
 import { OrderBook } from './components/dashboard/OrderBook';
 import { ActivityLog } from './components/dashboard/ActivityLog';
 import { VolatilityGauge } from './components/dashboard/VolatilityGauge';
+import { SystemAlerts } from './components/dashboard/SystemAlerts';
 import { AccountSummary } from './components/dashboard/AccountSummary';
 import { ProfitChart } from './components/charts/ProfitChart';
 import { CycleCountChart } from './components/charts/CycleCountChart';
@@ -173,6 +174,7 @@ function App() {
             <div className="w-96 space-y-4 overflow-y-auto">
               <AccountSummary />
               <VolatilityGauge />
+              <SystemAlerts />
               <ProfitChart />
               <OrderBook />
             </div>
