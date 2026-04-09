@@ -40,6 +40,8 @@
 | 34 | Fee rate centralizado en config.py | Medio | — |
 | 35 | Circuit breaker race condition fix | Medio | — |
 | 36 | Loading state en frontend App.tsx | Bajo | — |
+| 37 | Thresholds ajustados (profit 0.05%, liquidity 500$, slippage 0.01%) | Alto | — |
+| 38 | System Alerts con logging a archivo + dashboard + Telegram | Alto | — |
 
 ## Mejoras descartadas (no implementar de nuevo sin justificación)
 

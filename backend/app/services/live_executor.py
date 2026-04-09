@@ -15,7 +15,10 @@ from app.core.risk import RiskManager
 from app.exchanges.binance import BinanceAdapter
 from app.models.primitives import BidAsk, TradeResult
 from app.services.alerts import alerts_service
+from app.services.telegram import TelegramNotifier
 from app.utils.logger import get_logger
+
+telegram = TelegramNotifier()
 
 logger = get_logger(__name__)
 
@@ -239,6 +242,9 @@ class LiveExecutor:
             if spread > 0.5:
                 logger.warning(f"SKIP: {pair} spread too high ({spread:.2f}%)")
                 alerts_service.warning(f"Spread too high for {pair}", pair=pair, spread=spread)
+                await telegram.notify_warning(
+                    f"Spread too high: {pair} ({spread:.2f}%)", {"spread": spread}
+                )
                 return None
 
             # Check order book depth using remaining balance
@@ -260,6 +266,10 @@ class LiveExecutor:
                         pair=pair,
                         needed=needed,
                         available=available,
+                    )
+                    await telegram.notify_warning(
+                        f"Low depth: {pair}",
+                        {"needed": needed, "available": available},
                     )
                     return None
             except Exception as e:
@@ -389,6 +399,11 @@ class LiveExecutor:
                 status=status,
                 consecutive_errors=self._consecutive_errors,
             )
+            await telegram.notify_trade_failed(
+                cycle["currencies"],
+                status,
+                self._consecutive_errors,
+            )
             if self._consecutive_errors >= self._circuit_breaker_threshold:
                 self._circuit_broken = True
                 logger.error(
@@ -399,6 +414,11 @@ class LiveExecutor:
                     f"Circuit breaker triggered after {self._consecutive_errors} errors",
                     consecutive_errors=self._consecutive_errors,
                     timeout=self._circuit_reset_timeout,
+                )
+                await telegram.notify_circuit_breaker(
+                    f"Triggered after {self._consecutive_errors} consecutive errors",
+                    self._consecutive_errors,
+                    self._circuit_reset_timeout,
                 )
                 # Only start reset task if none is running
                 if self._circuit_reset_task is None or self._circuit_reset_task.done():

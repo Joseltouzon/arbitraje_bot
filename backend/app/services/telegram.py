@@ -111,6 +111,57 @@ class TelegramNotifier:
         """Notify about an error."""
         return await self.send(f"⚠️ <b>Error</b>\n{error}")
 
+    async def notify_warning(self, message: str, details: dict[str, Any] | None = None) -> bool:
+        """Notify about a warning."""
+        msg = f"⚡ <b>Warning</b>\n{message}"
+        if details:
+            lines = [f"{k}: {v}" for k, v in details.items()]
+            msg += "\n" + "\n".join(lines)
+        return await self.send(msg)
+
+    async def notify_circuit_breaker(
+        self, message: str, consecutive_errors: int, timeout: int
+    ) -> bool:
+        """Notify about circuit breaker trip."""
+        return await self.send(
+            f"🔴 <b>CIRCUIT BREAKER</b>\n"
+            f"{message}\n"
+            f"Errors: {consecutive_errors}\n"
+            f"Timeout: {timeout}s\n"
+            f"⚠️ Trading paused!"
+        )
+
+    async def notify_trade_failed(
+        self, currencies: list, status: str, consecutive_errors: int
+    ) -> bool:
+        """Notify about failed trade."""
+        return await self.send(
+            f"❌ <b>Trade Failed</b>\n"
+            f"{' → '.join(currencies)}\n"
+            f"Status: {status}\n"
+            f"Consecutive errors: {consecutive_errors}"
+        )
+
+    async def notify_alert(
+        self, alert_type: str, message: str, details: dict[str, Any] | None = None
+    ) -> bool:
+        """Generic alert notification."""
+        emoji_map = {
+            "error": "🔴",
+            "warning": "⚡",
+            "circuit_breaker": "🔴",
+            "trade_failed": "❌",
+            "trade_success": "✅",
+            "info": "ℹ️",
+        }
+        emoji = emoji_map.get(alert_type, "📢")
+        title = alert_type.replace("_", " ").title()
+        msg = f"{emoji} <b>{title}</b>\n{message}"
+        if details:
+            lines = [f"{k}: {v}" for k, v in details.items()]
+            msg += "\n" + "\n".join(lines)
+        return await self.send(msg)
+
     async def notify_summary(self, stats: dict[str, Any]) -> bool:
         """Send periodic summary."""
         msg = (
