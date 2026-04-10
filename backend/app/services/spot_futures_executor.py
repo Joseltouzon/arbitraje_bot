@@ -122,10 +122,11 @@ class SpotFuturesExecutor:
         symbol = opportunity["symbol"]
         direction = opportunity["direction"]
         funding_rate = opportunity["funding_rate"]
-        abs_rate = abs(funding_rate)
+        funding_rate_pct = opportunity.get("funding_rate_pct", funding_rate * 100)
+        abs_rate_pct = abs(funding_rate_pct)
 
-        if abs_rate < 0.001:
-            logger.info(f"SKIP {symbol}: funding_rate={funding_rate:.6f} too low (<0.001%)")
+        if abs_rate_pct < 0.01:
+            logger.info(f"SKIP {symbol}: funding_rate={funding_rate_pct:.4f}% too low (<0.01%)")
             return None
 
         try:

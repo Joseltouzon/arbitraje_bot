@@ -9,20 +9,21 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Symbols eligible for funding rate carry
+# Symbols eligible for funding rate carry (only USDT perpetuals)
 FUNDING_SYMBOLS = [
     "BTCUSDT",
     "ETHUSDT",
     "BNBUSDT",
     "SOLUSDT",
     "XRPUSDT",
-    "ADAUSDT",
     "DOGEUSDT",
     "DOTUSDT",
     "AVAXUSDT",
     "LINKUSDT",
-    "MATICUSDT",
     "UNIUSDT",
+    "AAVEUSDT",
+    "LTCUSDT",
+    "ETCUSDT",
 ]
 
 
@@ -46,14 +47,14 @@ class SpotFuturesDetector:
     async def scan(
         self,
         spot_tickers: dict[str, BidAsk],
-        min_funding_rate: float = 0.001,  # 0.001% per 8h = ~0.11% monthly
+        min_funding_rate_pct: float = 0.01,  # 0.01% per 8h minimum
     ) -> list[dict[str, Any]]:
         """
         Scan for funding rate carry opportunities.
 
         Args:
             spot_tickers: current spot prices
-            min_funding_rate: minimum |funding_rate| to enter (default 0.001%)
+            min_funding_rate_pct: minimum |funding_rate| % to enter (default 0.01%)
         """
         try:
             funding_data = await self.futures.get_all_funding_rates()
@@ -71,10 +72,11 @@ class SpotFuturesDetector:
                 continue
 
             fr_data = funding_by_symbol[symbol]
-            funding_rate = fr_data["funding_rate"]
-            abs_rate = abs(funding_rate)
+            funding_rate = fr_data["funding_rate"]  # decimal (ej: 0.000038 = 0.0038%)
+            funding_rate_pct = funding_rate * 100  # convert to percentage
+            abs_rate_pct = abs(funding_rate_pct)
 
-            if abs_rate < min_funding_rate:
+            if abs_rate_pct < min_funding_rate_pct:
                 continue
 
             # Need spot price for the UI
@@ -83,23 +85,22 @@ class SpotFuturesDetector:
                 spot_mid = (spot_tickers[symbol].bid + spot_tickers[symbol].ask) / 2
                 spot_price = round(spot_mid, 2)
 
-            # Calculate projected returns
-            # Funding rate * 3 settlements/day * 30 days = monthly %
-            daily_rate = abs_rate * 3  # 3 settlements per day
-            monthly_rate = daily_rate * 30
-            annual_rate = daily_rate * 365
+            # Calculate projected returns (in %)
+            daily_rate_pct = abs_rate_pct * 3  # 3 settlements per day
+            monthly_rate_pct = daily_rate_pct * 30
+            annual_rate_pct = daily_rate_pct * 365
 
             direction = "funding_positive" if funding_rate > 0 else "funding_negative"
 
             opportunity = {
                 "symbol": symbol,
                 "funding_rate": round(funding_rate, 6),
-                "funding_rate_pct": round(funding_rate * 100, 4),
-                "abs_rate_pct": round(abs_rate * 100, 4),
-                "daily_return_pct": round(daily_rate * 100, 4),
-                "monthly_return_pct": round(monthly_rate * 100, 2),
-                "annual_return_pct": round(annual_rate * 100, 1),
-                "net_profit_pct": round(daily_rate * 100, 4),  # used by executor for ranking
+                "funding_rate_pct": round(funding_rate_pct, 4),
+                "abs_rate_pct": round(abs_rate_pct, 4),
+                "daily_return_pct": round(daily_rate_pct, 4),
+                "monthly_return_pct": round(monthly_rate_pct, 2),
+                "annual_return_pct": round(annual_rate_pct, 1),
+                "net_profit_pct": round(daily_rate_pct, 4),  # used by executor for ranking
                 "direction": direction,
                 "spot_price": spot_price,
                 "next_funding_time": fr_data.get("next_funding_time", 0),
@@ -109,9 +110,8 @@ class SpotFuturesDetector:
             opportunities.append(opportunity)
 
             logger.info(
-                f"Funding opportunity: {symbol} rate={funding_rate:.6f} "
-                f"({abs_rate * 100:.4f}%/8h, ~{monthly_rate * 100:.2f}%/mo) "
-                f"dir={direction}"
+                f"Funding opportunity: {symbol} rate={funding_rate_pct:.4f}% "
+                f"(~{monthly_rate_pct:.2f}%/mo) dir={direction}"
             )
 
         # Sort by absolute funding rate descending
@@ -120,15 +120,14 @@ class SpotFuturesDetector:
         self._last_scan = datetime.now()
 
         if not opportunities:
-            # Log top rates even if below threshold for debugging
             top_rates = []
             for symbol in FUNDING_SYMBOLS[:5]:
                 if symbol in funding_by_symbol:
-                    fr = funding_by_symbol[symbol]["funding_rate"]
-                    top_rates.append(f"{symbol}:{fr * 100:.4f}%")
+                    fr_pct = funding_by_symbol[symbol]["funding_rate"] * 100
+                    top_rates.append(f"{symbol}:{fr_pct:.4f}%")
             if top_rates:
                 logger.info(
-                    f"Funding scan: no opportunities above {min_funding_rate * 100:.3f}%. "
+                    f"Funding scan: no opportunities above {min_funding_rate_pct:.2f}%. "
                     f"Top rates: {', '.join(top_rates)}"
                 )
         else:
