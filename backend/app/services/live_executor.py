@@ -225,8 +225,7 @@ class LiveExecutor:
         trade_legs: list[LiveTradeLeg] = []
         status = "completed"
 
-        # Pre-validate all legs with order book
-        remaining_balance = initial_balance
+        # Pre-validate: check spread only (balance is tracked via expected_amounts)
         for leg in legs:
             pair = leg["pair"]
             if pair not in tickers:
@@ -245,46 +244,63 @@ class LiveExecutor:
                 )
                 return None
 
-            # Check order book depth using remaining balance
-            try:
-                orderbook = await self.exchange.get_orderbook(pair, depth=5)
-                if leg["side"] == "buy":
-                    available = sum(level.quantity for level in orderbook.asks[:3])
-                    needed = float(remaining_balance) / float(ticker.ask)
-                else:
-                    available = sum(level.quantity for level in orderbook.bids[:3])
-                    needed = float(remaining_balance) / float(ticker.bid)
-
-                if available < needed:
-                    logger.warning(
-                        f"SKIP: {pair} insufficient depth (need {needed:.4f}, have {available:.4f})"
-                    )
-                    alerts_service.warning(
-                        f"Low depth for {pair}",
-                        pair=pair,
-                        needed=needed,
-                        available=available,
-                    )
-                    await get_telegram().notify_warning(
-                        f"Low depth: {pair}",
-                        {"needed": needed, "available": available},
-                    )
-                    return None
-            except Exception as e:
-                logger.warning(f"SKIP: {pair} orderbook check failed: {e}")
-                alerts_service.warning(
-                    f"Orderbook check failed for {pair}", pair=pair, error=str(e)
-                )
-                return None
-
-            # Update remaining balance estimate for next leg
-            remaining_balance = remaining_balance * Decimal("0.999")
-
         try:
+            # Track expected balances during execution
+            # Start with initial USDT balance
+            expected_balances: dict[str, Decimal] = {"USDT": initial_balance}
+
             for leg in legs:
                 leg_start = time.time()
                 pair = leg["pair"]
                 side = leg["side"].upper()
+                from_currency = leg.get("from_currency", "")
+                to_currency = leg.get("to_currency", "")
+
+                # Get expected balance for the currency we're spending
+                spend_currency = to_currency if side == "BUY" else from_currency
+                spend_balance = expected_balances.get(spend_currency, Decimal("0"))
+
+                if spend_balance <= 0:
+                    logger.error(f"FAIL: no expected balance for {spend_currency}")
+                    alerts_service.error(
+                        f"No expected balance for {spend_currency}",
+                        currency=spend_currency,
+                        expected_balances=str(expected_balances),
+                    )
+                    status = "failed"
+                    break
+
+                # Verify orderbook has liquidity for SELL orders
+                if side == "SELL":
+                    try:
+                        orderbook = await self.exchange.get_orderbook(pair, depth=10)
+                        available_sell = sum(level.quantity for level in orderbook.bids[:5])
+                        # For SELL, we need to sell `spend_balance` amount of base currency
+                        needed_sell = float(spend_balance)
+                        if available_sell < needed_sell:
+                            logger.warning(
+                                f"SKIP: {pair} insufficient SELL depth "
+                                f"(need {needed_sell:.4f}, have {available_sell:.4f})"
+                            )
+                            alerts_service.warning(
+                                f"Low SELL depth for {pair}",
+                                pair=pair,
+                                needed=needed_sell,
+                                available=available_sell,
+                            )
+                            await get_telegram().notify_warning(
+                                f"Low SELL depth: {pair}",
+                                {"needed": needed_sell, "available": available_sell},
+                            )
+                            status = "failed"
+                            break
+                    except Exception as e:
+                        logger.warning(f"SKIP: {pair} orderbook check failed: {e}")
+                        alerts_service.warning(
+                            f"Orderbook check failed for {pair}", pair=pair, error=str(e)
+                        )
+                        status = "failed"
+                        break
 
                 quantity = await self._calculate_quantity(pair, side, leg, tickers)
 
@@ -330,6 +346,29 @@ class LiveExecutor:
                         f"Order placed: {side} {quantity} {pair} "
                         f"@ {result.price} | fee: {result.fee}"
                     )
+
+                    # Update expected balances after successful order
+                    fee_mult = Decimal("0.999")  # Account for ~0.1% fee
+                    if side == "BUY":
+                        # Bought `to_currency`, spent `from_currency`
+                        received = Decimal(str(result.quantity)) * fee_mult
+                        expected_balances[to_currency] = (
+                            expected_balances.get(to_currency, Decimal("0")) + received
+                        )
+                        # Deduct from spent currency
+                        if from_currency in expected_balances:
+                            expected_balances[from_currency] = Decimal("0")
+                    else:
+                        # Sold `from_currency`, received `to_currency`
+                        received_usd = (
+                            Decimal(str(result.quantity)) * Decimal(str(result.price)) * fee_mult
+                        )
+                        expected_balances[to_currency] = (
+                            expected_balances.get(to_currency, Decimal("0")) + received_usd
+                        )
+                        # Deduct from spent currency
+                        if from_currency in expected_balances:
+                            expected_balances[from_currency] = Decimal("0")
 
                 except Exception as e:
                     logger.error(f"Order failed for {pair}: {e}")
