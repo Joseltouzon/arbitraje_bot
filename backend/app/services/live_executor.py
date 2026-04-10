@@ -289,6 +289,17 @@ class LiveExecutor:
                 quantity = await self._calculate_quantity(pair, side, leg, tickers)
 
                 if quantity <= 0:
+                    logger.error(f"FAIL: quantity=0 for {pair} {side}")
+                    alerts_service.error(
+                        f"Order quantity is zero: {pair} {side}",
+                        pair=pair,
+                        side=side,
+                        leg=leg,
+                    )
+                    await get_telegram().notify_warning(
+                        f"Quantity zero: {pair}",
+                        {"pair": pair, "side": side, "leg": str(leg)},
+                    )
                     status = "failed"
                     trade_legs.append(
                         LiveTradeLeg(
@@ -354,7 +365,9 @@ class LiveExecutor:
             final_balance = await self.exchange.get_balance("USDT")
 
         except Exception as e:
-            logger.error(f"Trade execution error: {e}")
+            logger.error(f"Trade execution error: {e}", exc_info=True)
+            alerts_service.error(f"Trade execution failed: {str(e)}", error=str(e))
+            await get_telegram().notify_error(f"Trade execution error: {str(e)}")
             final_balance = initial_balance
             status = "failed"
 

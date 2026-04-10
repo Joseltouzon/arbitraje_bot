@@ -1,6 +1,5 @@
-import pytest
 
-from app.services.alerts import AlertType, AlertsService
+from app.services.alerts import AlertsService, AlertType
 
 
 def test_alerts_service_initial_state():

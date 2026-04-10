@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.services.alerts import AlertType, alerts_service
+from app.services.alerts import alerts_service
 
 
 @pytest.fixture(autouse=True)
