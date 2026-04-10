@@ -124,8 +124,8 @@ class SpotFuturesExecutor:
         funding_rate = opportunity["funding_rate"]
         abs_rate = abs(funding_rate)
 
-        if abs_rate < 0.003:
-            logger.info(f"SKIP {symbol}: funding_rate={funding_rate:.6f} too low")
+        if abs_rate < 0.001:
+            logger.info(f"SKIP {symbol}: funding_rate={funding_rate:.6f} too low (<0.001%)")
             return None
 
         try:
@@ -136,11 +136,11 @@ class SpotFuturesExecutor:
             return None
 
         if spot_usdt < Decimal("10"):
-            logger.warning(f"SKIP {symbol}: spot too low {spot_usdt}")
+            logger.warning(f"SKIP {symbol}: spot balance too low ${spot_usdt} (need $10)")
             return None
 
         if futures_usdt < Decimal("5"):
-            logger.warning(f"SKIP {symbol}: futures too low {futures_usdt}")
+            logger.warning(f"SKIP {symbol}: futures balance too low ${futures_usdt} (need $5)")
             return None
 
         start_time = time.time()

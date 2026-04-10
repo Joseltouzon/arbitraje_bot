@@ -10,7 +10,20 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Symbols eligible for funding rate carry
-FUNDING_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+FUNDING_SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "DOTUSDT",
+    "AVAXUSDT",
+    "LINKUSDT",
+    "MATICUSDT",
+    "UNIUSDT",
+]
 
 
 class SpotFuturesDetector:
@@ -33,14 +46,14 @@ class SpotFuturesDetector:
     async def scan(
         self,
         spot_tickers: dict[str, BidAsk],
-        min_funding_rate: float = 0.005,  # 0.005% per 8h = ~0.55% monthly
+        min_funding_rate: float = 0.001,  # 0.001% per 8h = ~0.11% monthly
     ) -> list[dict[str, Any]]:
         """
         Scan for funding rate carry opportunities.
 
         Args:
             spot_tickers: current spot prices
-            min_funding_rate: minimum |funding_rate| to enter (default 0.005%)
+            min_funding_rate: minimum |funding_rate| to enter (default 0.001%)
         """
         try:
             funding_data = await self.futures.get_all_funding_rates()
@@ -105,6 +118,25 @@ class SpotFuturesDetector:
         opportunities.sort(key=lambda o: abs(o["funding_rate"]), reverse=True)
         self._opportunities = opportunities
         self._last_scan = datetime.now()
+
+        if not opportunities:
+            # Log top rates even if below threshold for debugging
+            top_rates = []
+            for symbol in FUNDING_SYMBOLS[:5]:
+                if symbol in funding_by_symbol:
+                    fr = funding_by_symbol[symbol]["funding_rate"]
+                    top_rates.append(f"{symbol}:{fr * 100:.4f}%")
+            if top_rates:
+                logger.info(
+                    f"Funding scan: no opportunities above {min_funding_rate * 100:.3f}%. "
+                    f"Top rates: {', '.join(top_rates)}"
+                )
+        else:
+            best = opportunities[0]
+            logger.info(
+                f"Funding scan: {len(opportunities)} opportunities. "
+                f"Best: {best['symbol']} {best['funding_rate_pct']:.4f}%/8h"
+            )
 
         return opportunities
 
