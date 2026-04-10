@@ -257,7 +257,9 @@ class LiveExecutor:
                 to_currency = leg.get("to_currency", "")
 
                 # Get expected balance for the currency we're spending
-                spend_currency = to_currency if side == "BUY" else from_currency
+                # For BUY: spend from_currency to get to_currency
+                # For SELL: spend from_currency to get to_currency
+                spend_currency = from_currency
                 spend_balance = expected_balances.get(spend_currency, Decimal("0"))
 
                 if spend_balance <= 0:
